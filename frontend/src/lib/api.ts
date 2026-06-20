@@ -140,7 +140,7 @@ export function streamChat(
               callbacks.onError(parsed.message || 'Unknown error')
             }
           } catch {
-            // Not JSON — plain text token
+            // Not JSON: plain text token
             if (eventType === 'token' || !eventType) {
               callbacks.onToken(eventData)
             }

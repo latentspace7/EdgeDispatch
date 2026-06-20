@@ -65,7 +65,7 @@ class CostBreakdown:
     observed_local_in: int           # actual local SLM input tokens observed
     observed_local_out: int          # actual local SLM output tokens observed
     c_mono: float                    # estimated monolithic cost ($)
-    c_ed: float                      # EdgeDispatch cost ($) — 0.0 when local
+    c_ed: float                      # EdgeDispatch cost ($) (0.0 when local)
     delta_c: float                   # savings vs monolithic ($)
     schema_tokens_avoided: int       # tool-schema tokens kept out of the cloud context
 

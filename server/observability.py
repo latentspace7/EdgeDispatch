@@ -633,7 +633,7 @@ class ArizeEvaluator:
         if any(m in answer_lower for m in constraint_markers):
             return 1
 
-        return 1  # Default for prototype — no obvious violations
+        return 1  # Default for prototype: no obvious violations
 
     def flush_evaluations(self) -> list[dict[str, Any]]:
         """Return and clear all evaluation records."""

@@ -167,9 +167,9 @@ async def chat(body: ChatRequest):
                     "data": json.dumps(done_payload),
                 }
             else:
-                # No orchestrator — return a mock message
+                # No orchestrator: return a mock message
                 mock_response = (
-                    f"Received your query: \"{query}\". (Orchestrator not configured — "
+                    f"Received your query: \"{query}\". (Orchestrator not configured, "
                     "connect MCP servers and models to enable full processing.)"
                 )
                 assistant_content = mock_response

@@ -207,7 +207,7 @@ class MCPRouter:
             # Infer source archetype from server name
             source = self._infer_archetype(server_name)
 
-            # Build entries — in practice, this would introspect the actual
+            # Build entries. In practice, this would introspect the actual
             # tools from each MCP server, but for the prototype we create
             # representative entries.
             if source == "document_store":

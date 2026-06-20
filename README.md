@@ -1,9 +1,9 @@
-# EdgeDispatch — Hybrid LLM Orchestration for Local-First AI Workflows
+# EdgeDispatch - Hybrid LLM Orchestration for Local-First AI Workflows
 
 A two-tier, MCP-aware multi-agent system implementing the EdgeDispatch thesis
 architecture: a local SLM (via `llama.cpp`) handles tool dispatch and simple
 queries at zero cloud cost, and a cloud frontier model (OpenAI) is invoked only
-when a query exceeds a configurable tool-call threshold — receiving a compact
+when a query exceeds a configurable tool-call threshold - receiving a compact
 handoff document instead of the full tool manifest.
 
 The backend computes a per-query cost breakdown (thesis Eq 2.4–2.6) against
@@ -17,7 +17,7 @@ correctness metrics (thesis Sec 4.6–4.7) per query.
 
 ## Table of Contents
 
-1. [Full Stack Runbook](#full-stack-runbook) — start here
+1. [Full Stack Runbook](#full-stack-runbook) - start here
 2. [Architecture](#architecture)
 3. [How Dispatch Works](#how-dispatch-works)
 4. [Cost Model & Pricing](#cost-model--pricing)
@@ -43,13 +43,13 @@ The fastest path to a running application. Each numbered step is a prerequisite
 for the next. You will need **three terminals** (backend, local model, frontend)
 plus an OpenAI API key for the cloud tier.
 
-### Step 1 — Install uv (Python package manager)
+### Step 1 - Install uv (Python package manager)
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Step 2 — Install Python dependencies
+### Step 2 - Install Python dependencies
 
 From the repository root:
 
@@ -57,7 +57,7 @@ From the repository root:
 uv sync
 ```
 
-### Step 3 — Set your OpenAI API key (cloud tier)
+### Step 3 - Set your OpenAI API key (cloud tier)
 
 ```bash
 export OPENAI_API_KEY="sk-your-key-here"
@@ -66,7 +66,7 @@ export OPENAI_API_KEY="sk-your-key-here"
 > **Without this**, queries that escalate to the cloud tier will fail. Queries
 > that resolve locally still work (provided Step 4 is done).
 
-### Step 4 — Start the local model (Terminal 1)
+### Step 4 - Start the local model (Terminal 1)
 
 The local agent needs a `llama.cpp` server with an OpenAI-compatible API. Full
 instructions are in [Local Model (llama.cpp)](#local-model-llamacpp); the short
@@ -106,7 +106,7 @@ export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
 > routes to the local agent will fail when it tries to call the SLM. See
 > [Troubleshooting](#troubleshooting) for the fallback.
 
-### Step 5 — Start the backend (Terminal 2)
+### Step 5 - Start the backend (Terminal 2)
 
 From the repository root:
 
@@ -117,7 +117,7 @@ uv run uvicorn server.main:app --reload --host 0.0.0.0 --port 8000
 On startup the backend will:
 
 1. Connect three stub MCP servers (document store, relational DB, policy wiki)
-   as stdio subprocesses — no extra setup needed.
+   as stdio subprocesses - no extra setup needed.
 2. Instrument the OpenAI client with OpenInference spans.
 3. **Auto-launch Arize Phoenix** at `http://localhost:6006`. The first run takes
    ~8 seconds because Phoenix builds its self-contained SQLite database at
@@ -143,7 +143,7 @@ curl http://localhost:8000/api/settings
 `mcp_server_count` should read `3`. If it reads `0`, see
 [Troubleshooting](#mcp-servers-fail-to-connect).
 
-### Step 6 — Start the frontend (Terminal 3)
+### Step 6 - Start the frontend (Terminal 3)
 
 ```bash
 cd frontend
@@ -154,7 +154,7 @@ npm run dev
 Open **http://localhost:5173**. The Vite dev server proxies `/api/*` to the
 backend at `:8000`.
 
-### Step 7 — Send a test message
+### Step 7 - Send a test message
 
 In the browser, type the thesis example query:
 
@@ -177,7 +177,7 @@ Then try a simple single-source query:
 This should route locally (`D=0`) and show a cyan `⌂ Local resolution` badge
 with `0 tok to cloud`.
 
-### Step 8 — Adjust pricing (optional)
+### Step 8 - Adjust pricing (optional)
 
 Open **Settings** (gear icon, top right). Under **Cloud Pricing**, set the
 input and output $/M token rates to match your current OpenAI pricing. The
@@ -257,9 +257,9 @@ against the threshold.
 > dispatch. This prototype makes the *heuristic* authoritative for determinism
 > and to decouple dispatch correctness from SLM compliance. It is implemented
 > with **two local-agent variants**:
-> - **resolve variant** (D=0): has MCP tools but *no* escalation tool — it must
+> - **resolve variant** (D=0): has MCP tools but *no* escalation tool - it must
 >   answer directly and cannot override the route.
-> - **escalate variant** (D=1): has MCP tools *and* `escalate_query` — it gathers
+> - **escalate variant** (D=1): has MCP tools *and* `escalate_query` - it gathers
 >   evidence, then packages a handoff for the cloud synthesiser.
 >
 > The heuristic picks which variant runs. A fallback covers the case where the
@@ -545,7 +545,7 @@ turns, and token usage; `ArizeEvaluator` stores per-query evaluation records
 ### Where Phoenix stores data
 
 Phoenix uses a **self-contained local SQLite database** at `~/.phoenix/`. No
-external database (Postgres, MySQL, etc.) is required — the schema is built
+external database (Postgres, MySQL, etc.) is required - the schema is built
 automatically via Alembic migrations on first run. That first-run migration
 takes ~8 seconds; subsequent starts are fast because the schema already exists.
 
@@ -748,7 +748,7 @@ export OPENAI_API_KEY="sk-your-actual-key"
 ### Phoenix first-run is slow or times out
 The first launch builds a SQLite schema at `~/.phoenix/` via Alembic migrations
 (~8 seconds). You may see a non-fatal `Failed to launch Phoenix: server took
-too long to start` warning on the very first run — the orchestrator still
+too long to start` warning on the very first run - the orchestrator still
 initialises and OpenInference spans are still collected. The next start will be
 fast. To pre-warm the database, see
 [Observability](#observability-arize-phoenix).

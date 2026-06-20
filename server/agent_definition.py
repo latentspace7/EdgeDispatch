@@ -3,9 +3,9 @@ EdgeDispatch - Agent Definition Module
 
 Architecture:
   - Local Agent (two variants): SLM on consumer hardware (llama.cpp).
-      * resolve variant  — used when the dispatcher decides D=0 (local). It
+      * resolve variant: used when the dispatcher decides D=0 (local). It
         invokes MCP tools and answers directly; it has no escalation tool.
-      * escalate variant — used when the dispatcher decides D=1 (cloud). It
+      * escalate variant: used when the dispatcher decides D=1 (cloud). It
         invokes MCP tools to gather evidence, then calls `escalate_query` to
         package a structured handoff document for the cloud tier.
     The Python dispatch heuristic is authoritative (thesis Eq 2.1): it selects
@@ -82,7 +82,7 @@ def create_high_end_model_provider() -> OpenAIProvider:
 # ──────────────────────────────────────────────
 
 # Used when the dispatcher has decided D=0 (local resolution). The agent has
-# MCP tools but NO escalation tool — it cannot override the routing decision.
+# MCP tools but NO escalation tool. It cannot override the routing decision.
 LOCAL_AGENT_RESOLVE_INSTRUCTIONS = """You are the EdgeDispatch local dispatch agent running on consumer hardware.
 The dispatcher has determined this query can be resolved LOCALLY (tool requirement
 is below the escalation threshold of {tool_threshold}).
@@ -242,7 +242,7 @@ def create_local_resolve_agent(
     """
     Create the local agent variant used when the dispatcher routes locally (D=0).
 
-    This agent has MCP tools but NO escalation tool — it must answer directly.
+    This agent has MCP tools but NO escalation tool. It must answer directly.
     """
     model_provider = create_local_model_provider()
     model_settings = ModelSettings(temperature=TEMPERATURE_LOCAL)
@@ -324,7 +324,7 @@ def create_high_end_agent() -> tuple[Agent[dict[str, Any]], OpenAIProvider]:
     """
     Create the high-end synthesis agent backed by a cloud frontier model (OpenAI).
 
-    Pure synthesizer — no MCP servers, no tools. Receives only the handoff prompt.
+    Pure synthesizer with no MCP servers and no tools. Receives only the handoff prompt.
     """
     model_provider = create_high_end_model_provider()
     model_settings = ModelSettings(temperature=TEMPERATURE_HIGH_END)
