@@ -7,6 +7,7 @@ export interface Message {
   cost?: CostBreakdown
   wasEscalated?: boolean
   toolCount?: number
+  handoff?: HandoffDetails
 }
 
 export interface Conversation {
@@ -55,6 +56,15 @@ export interface CostBreakdown {
   schema_tokens_avoided: number
 }
 
+export interface HandoffDetails {
+  query: string
+  selectedTools: string[]
+  rationale: string
+  evidence: unknown[]
+  toolThreshold: number
+  prompt: string
+}
+
 export interface StreamDone {
   conversationId: string
   wasEscalated: boolean
@@ -62,4 +72,5 @@ export interface StreamDone {
   threshold: number
   cost?: CostBreakdown
   evaluation?: Record<string, unknown>
+  handoff?: HandoffDetails
 }

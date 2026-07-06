@@ -1,8 +1,5 @@
-# EdgeDispatch — Architecture Reference
+# EdgeDispatch  - Architecture Reference
 
-> **Audience:** Principal Product Engineers, Principal AI Engineers, and
-> Principal Technical Business Analysts. Read time: under 10 minutes.
->
 > A practical onboarding and reference guide for the EdgeDispatch prototype,
 > a two-tier, MCP-aware hybrid LLM orchestration system. For the full operator
 > runbook, see [`README.md`](./README.md). This document covers *what the
@@ -44,8 +41,8 @@ tiers:
 
 | Tier | Model | When it runs | Cloud cost |
 |------|-------|--------------|------------|
-| **Local (edge)** | A small language model (SLM) served by `llama.cpp` | Queries that need fewer tools than the configured threshold | **Zero** cloud tokens |
-| **Cloud (frontier)** | OpenAI `gpt-4o` (default) | Queries that meet or exceed the tool threshold | Billed, but only on a **compact handoff document**, never the full tool manifest |
+| **Local (edge)** | A small language model (SLM) served by `llama.cpp` | Queries where the model does not call `escalate_query` and actual MCP calls stay below the configured threshold | **Zero** cloud tokens |
+| **Cloud (frontier)** | OpenAI `gpt-4o` (default) | Queries where the model calls `escalate_query` or actual MCP calls meet/exceed the threshold | Billed, but only on a **compact handoff document**, never the full tool manifest |
 
 ### The problem it solves
 
@@ -57,19 +54,11 @@ regardless of query difficulty.
 EdgeDispatch pushes tool selection and evidence gathering to a local SLM on
 consumer hardware. The cloud model is invoked only for complex synthesis, and
 even then it receives only a structured **handoff document** `H = {Q, Ŝ(Q),
-rationale, E}` rather than the full schema set. The backend computes a
-per-query cost breakdown (thesis Equations 2.4–2.6) against user-configurable
+rationale, E}` rather than the full tool manifest. Each evidence item can carry
+the invoked tool's compact schema, reason, and result. The backend computes a
+per-query cost breakdown (thesis Equations 2.4-2.6) against user-configurable
 API pricing and surfaces tool-selection and answer-correctness metrics per
 query.
-
-### Intended users and stakeholders
-
-| Stakeholder | What they get from this repo |
-|-------------|------------------------------|
-| **AI Engineers** | A working two-agent pipeline (local resolve / local escalate / cloud synthesise), MCP tool integration, per-query cost accounting, and Phoenix traces. |
-| **Product Engineers** | A React chat UI with per-query cost badges, a settings dialog for threshold and pricing, and an SSE streaming protocol. |
-| **Technical Business Analysts** | A transparent dispatch decision (heuristic + rationale), `GET /api/evaluations` for Tool F1 and a 6-point answer rubric, and a cost-savings figure per query. |
-| **Thesis examiners** | A reproducible prototype aligned to thesis Sections 2.2, 4.5–4.7, with known divergences documented in [§14](#14-key-design-decisions). |
 
 ### High-level purpose
 
@@ -83,87 +72,46 @@ cost) needed to evaluate that claim.
 
 ## 2. System overview
 
-### Plain-English architecture
+### Architecture
 
 A user types a question in a React chat UI. The frontend posts it to the
-FastAPI backend, which streams back Server-Sent Events. Before any LLM runs,
-a Python **heuristic** (`MCPRouter.analyze_query`) estimates how many distinct
-MCP tools the query needs and compares that against a configurable threshold.
+FastAPI backend, which streams back Server-Sent Events. The local SLM receives
+the compact MCP manifest, chooses which MCP tools to invoke, and either answers
+locally or calls `escalate_query`.
 
-- **Below threshold (D=0, local):** a *resolve-variant* local agent (SLM via
-  `llama.cpp`) calls MCP tools and writes the final answer directly. Zero
-  tokens reach the cloud.
-- **At or above threshold (D=1, escalate):** an *escalate-variant* local agent
-  calls MCP tools to gather evidence, then calls an `escalate_query` function
-  that packages a handoff document. A cloud synthesis agent (OpenAI) receives
-  **only** that document and produces the final answer.
+- **Below threshold (D=0, local):** the local agent invoked fewer actual MCP
+  calls than the UI threshold and writes the final answer directly. Zero tokens
+  reach the cloud.
+- **At or above threshold (D=1, escalate):** the local agent called
+  `escalate_query`, or the backend enforced escalation because actual MCP calls
+  reached the threshold. A cloud synthesis agent (OpenAI) receives **only** the
+  handoff document and produces the final answer.
 
 After the run, the backend computes a cost breakdown (monolithic baseline vs
 EdgeDispatch actual), evaluates tool selection and answer quality, logs the
 evaluation, and emits everything in the SSE `done` event. The frontend renders
 the answer token-by-token and shows a cost badge beneath it.
 
-### How the frontend and backend fit together
-
-```
-┌────────────────────────────────────────────┐
-│  Browser — React 19 + TS + Tailwind (:5173)│
-│  Chat UI, cost badges, settings dialog     │
-│  Conversations persisted in localStorage   │
-└──────────────────┬─────────────────────────┘
-                   │  SSE over POST /api/chat
-                   │  (Vite proxies /api → :8000)
-                   ▼
-┌────────────────────────────────────────────┐
-│  FastAPI backend (:8000)                   │
-│  /api/chat · /api/conversations            │
-│  /api/settings · /api/evaluations · health │
-└──────────────────┬─────────────────────────┘
-                   │
-         EdgeDispatchOrchestrator.process_query()
-                   │
-      ┌────────────┴───────────────┐
-      │  MCPRouter.analyze_query() │  ← authoritative dispatch
-      │  heuristic → D ∈ {0,1}     │
-      └────────────┬───────────────┘
-             D=0   │   D=1
-        ┌──────────┘   └──────────┐
-        ▼                         ▼
-  resolve agent            escalate agent
-  (llama.cpp)              (llama.cpp)
-  MCP tools → answer       MCP tools → escalate_query
-  C_ED = 0                 → handoff H
-                                   │
-                                   ▼
-                          cloud synthesiser
-                          (OpenAI gpt-4o)
-                          receives ONLY H
-                          → final answer
-                                   │
-              MCP tools (3 stub servers, stdio):
-              document_store · relational_db · policy_wiki
-```
-
 ### Main runtime flow
 
 1. **Frontend** posts `{ query, conversation_id, tool_threshold }` to
    `/api/chat`.
-2. **Backend** emits an SSE `status` event ("Analyzing…"), then a `routing`
-   status with the estimated tool count and route.
-3. **Orchestrator** runs the selected agent variant (and the cloud synthesiser
-   if escalated), then emits `token` events (chunked from the final answer).
+2. **Backend** emits an SSE `status` event showing that local model dispatch is
+   running and the current threshold.
+3. **Orchestrator** runs the local agent and, when escalated, streams cloud
+   synthesis deltas as `token` events.
 4. **Backend** emits a `done` event carrying `was_escalated`, `tool_count`,
-   `threshold`, `cost` (full breakdown), and `evaluation` (Tool F1 + rubric).
+   `threshold`, `cost` (full breakdown), `evaluation` (Tool F1 + rubric), and
+   optional `handoff` details.
 5. **Frontend** attaches the metadata to the assistant message and renders a
    `CostBadge`.
 
-### AI-specific components
+### Important Components
 
 | Component | Location | Role |
 |-----------|----------|------|
-| Dispatch heuristic | `server/mcp_router.py` | Estimates tool count; selects route D ∈ {0,1}; builds handoff documents. |
-| Local resolve agent | `server/agent_definition.py` `create_local_resolve_agent` | D=0 path: MCP tools + direct answer, no escalation tool. |
-| Local escalate agent | `server/agent_definition.py` `create_local_escalate_agent` | D=1 path: MCP tools + `escalate_query` function tool. |
+| Manifest/schema helper | `server/mcp_router.py` | Builds compact tool manifests, schemas, and handoff documents. |
+| Local dispatch agent | `server/agent_definition.py` `create_local_escalate_agent` | Model-driven path: MCP tools + `escalate_query` function tool. |
 | Cloud synthesis agent | `server/agent_definition.py` `create_high_end_agent` | No tools; receives only the handoff prompt. |
 | `escalate_query` tool | `agent_definition.py` `make_escalation_function` | Packages `H = {Q, Ŝ(Q), rationale, E}` into the run context. |
 | Cost model | `server/cost.py` | Thesis Eq 2.4–2.6 with input+output pricing extension. |
@@ -187,8 +135,8 @@ thesis_code/
 │   ├── main.py                 # FastAPI app, lifespan, MCP server lifecycle, CORS, /api/health
 │   ├── config.py               # All env-var-overridable constants + MCP_SERVER_CONFIGS
 │   ├── cost.py                 # CostModel, CostBreakdown, TokenUsage (thesis Eq 2.4–2.6)
-│   ├── mcp_router.py           # MCPRouter heuristic, ToolManifestEntry, HandoffDocument
-│   ├── agent_definition.py     # Three agents + EdgeDispatchOrchestrator + escalate_query
+│   ├── mcp_router.py           # MCPRouter manifest/schema helpers, ToolManifestEntry, HandoffDocument
+│   ├── agent_definition.py     # Local dispatch agent + cloud agent + EdgeDispatchOrchestrator
 │   ├── observability.py        # EdgeDispatchHooks + ArizeEvaluator (Phoenix, rubric, F1)
 │   ├── models/
 │   │   └── schemas.py          # Pydantic request/response models (ChatRequest, Settings, …)
@@ -233,23 +181,6 @@ thesis_code/
             └── SettingsDialog.tsx  # Threshold slider, pricing inputs, model info
 ```
 
-### Where things live
-
-| Concern | Location |
-|---------|----------|
-| Configuration & env vars | `server/config.py` |
-| Shared types (frontend) | `frontend/src/lib/types.ts` |
-| Shared models (backend) | `server/models/schemas.py` |
-| Constants (thesis Table 2.1) | `server/cost.py` (`SCHEMA_TOKENS_PER_TOOL`, `INSTRUCTION_TOKENS`) |
-| Build artefacts | `frontend/dist/` (gitignored), `.venv/` (gitignored) |
-| Tests | **None present.** See [§12](#12-testing-and-quality). |
-| Local model weights | `./models/` (gitignored, user-downloaded) |
-| Phoenix SQLite | `~/.phoenix/` (outside the repo) |
-
-> **Note:** `backend_spec.md`, `frontend_spec.md`, `EdgeDispatch_Thesis_A.md`,
-> and `memory.md` exist in the working tree but are **gitignored**: they are
-> private design documents, not part of the committed codebase.
-
 ---
 
 ## 4. Frontend architecture
@@ -269,7 +200,7 @@ reload) and `useState` (ephemeral UI state).
 | `hooks/useLocalStorage.ts` | Generic JSON persistence hook used for conversations, active id, threshold, and pricing. |
 | `lib/api.ts` | `fetchSettings`, `updateSettings`, `deleteConversation`, and `streamChat` (a manual SSE reader that parses `event:`/`data:` blocks). Also `mapSettings`/`mapDone` for snake_case↔camelCase. |
 | `lib/types.ts` | `Message`, `Conversation`, `Settings`, `StreamStatus`, `CostBreakdown`, `StreamDone`. |
-| `components/MessageBubble.tsx` | Renders a message and its `CostBadge` (cyan `⌂ Local resolution` or violet `☁ Cloud synthesis`, with `c_ed`, `c_mono`, and `saved ΔC`). |
+| `components/MessageBubble.tsx` | Renders a message, its `CostBadge`, and optional handoff details (`Tools invoked`, rationale, evidence, prompt). |
 | `components/SettingsDialog.tsx` | Threshold slider (1–10), input/output $/M pricing inputs, model info cards; saves via `PUT /api/settings`. |
 | `components/Sidebar.tsx` | Collapsible conversation list with delete-on-hover, "New conversation" button, settings entry. |
 | `components/ChatInput.tsx` | Auto-growing textarea; Enter sends, Shift+Enter newlines, button toggles send/cancel. |
@@ -320,23 +251,6 @@ A single FastAPI application in `server/main.py` with two routers under
 `server/routes/`. The orchestrator is constructed once at startup and injected
 into the chat routes via `chat.set_orchestrator()`.
 
-### Request lifecycle
-
-1. **Startup** (`lifespan` in `main.py`):
-   - Build three `MCPServerStdio` from `MCP_SERVER_CONFIGS` (`config.py:76`).
-   - `await server.connect()` for each; failures are logged and skipped.
-   - Construct `EdgeDispatchOrchestrator` (which builds the manifest, both
-     local-agent variants, the cloud agent, the cost model, the evaluator;
-     instruments the OpenAI client; and **auto-launches Phoenix**).
-   - Publish `mcp_server_count` to the settings store.
-2. **Request** hits a route handler; validation is via Pydantic models
-   (`server/models/schemas.py`).
-3. **For `/api/chat`:** the handler yields SSE events from an async generator;
-   the orchestrator runs the pipeline; the final answer is chunked into ~20
-   `token` events followed by a `done` event.
-4. **Shutdown:** `orchestrator.close()` releases providers; each MCP server is
-   cleaned up (catching `BaseException` so `CancelledError` does not propagate).
-
 ### Routes
 
 | Method | Path | Handler | Purpose |
@@ -350,38 +264,13 @@ into the chat routes via `chat.set_orchestrator()`.
 | `GET` | `/api/evaluations` | `chat.get_evaluations` | Aggregate summary + per-query evaluation records. |
 | `GET` | `/api/health` | `main.health_check` | `{status, version, orchestrator_ready}`. |
 
-### Services, middleware, and utilities
-
-| Concern | Where | Notes |
-|---------|-------|-------|
-| CORS | `main.py:118` | Allows `localhost:5173`, `localhost:3000`, `127.0.0.1:5173`. |
-| Request validation | Pydantic models in `models/schemas.py` | FastAPI auto-validates; 422 on schema mismatch. |
-| Error handling | Route handlers + orchestrator try/except | Local-agent failures return an error result; cloud failures return an error string in the answer; SSE `error` event for unexpected exceptions. |
-| Logging | `logging.basicConfig` in `main.py:31` | Level via `EDGE_LOG_LEVEL`; format `HH:MM:SS [LEVEL] name: msg`. |
-| In-memory state | `_conversations` in `chat.py:31`, `_settings` in `settings.py:25`, `_evaluation_records` in `observability.py` | **Lost on restart.** Frontend conversations persist via localStorage. |
-| Settings sync | `Orchestrator._sync_config_from_settings` | Pulls threshold + pricing from the settings store before every query so UI edits take effect immediately. |
-| Caching | None beyond `MCPServerStdio(cache_tools_list=True)` | MCP tool lists are cached per server. |
-| Background jobs | Phoenix runs in a background thread (`launch_app(run_in_thread=True)`) | No queue, no scheduler. |
-
-### Validation, error handling, and logging
-
-- Pydantic validates request bodies; FastAPI returns 422 on type errors.
-- `update_settings` enforces `tool_threshold >= 1` and prices `>= 0` with
-  explicit `HTTPException(400)`.
-- The orchestrator wraps each agent run in `try/except`; failures do not crash
-  the server. They surface as error text in the answer or as an SSE `error`
-  event.
-- The MCP cleanup path catches `BaseException` (with re-raise for
-  `KeyboardInterrupt`/`SystemExit`) so asyncio `CancelledError` during shutdown
-  does not break the loop.
-
 ---
 
 ## 6. End-to-end application flow
 
 A typical request, layer by layer:
 
-### Layer 1 — Browser
+### Layer 1  - Browser
 
 1. User types in `ChatInput`; Enter triggers `handleSend`.
 2. `App.handleSend` auto-creates a conversation if none is active, then calls
@@ -391,92 +280,62 @@ A typical request, layer by layer:
 4. `streamChat` issues `POST /api/chat` with `{ query, conversation_id,
    tool_threshold }` and starts reading the SSE stream.
 
-### Layer 2 — FastAPI route (`routes/chat.py`)
+### Layer 2  - FastAPI route (`routes/chat.py`)
 
 5. `chat()` validates the body, resolves `conversation_id` (generates a UUID
    if absent), stores the user message, and returns `EventSourceResponse`.
-6. The async generator emits a `status` event ("Analyzing…"), then calls
-   `_orchestrator.router.analyze_query` to pre-compute the route and emits a
-   `routing` status event with the estimated tool count.
-7. `await _orchestrator.process_query(query)` runs the full pipeline (Layer 3).
-8. The final answer is split into ~20 word-chunks; each is emitted as a
-   `token` event with a 30 ms delay (simulated streaming).
+6. The async generator emits a `status` event, then emits a `routing` status
+   showing that the local model is choosing tools and displaying the current
+   threshold.
+7. The route consumes `_orchestrator.process_query_stream(query)`, which runs
+   the full pipeline (Layer 3) and yields answer events.
+8. `token` events are forwarded from the orchestrator stream. Escalated cloud
+   synthesis uses native `openai-agents` streaming deltas; local dispatch text
+   is buffered until the route decision is known so a threshold-triggered cloud
+   answer is not mixed with a local draft.
 9. A `done` event is emitted with `was_escalated`, `tool_count`, `threshold`,
-   `cost`, and `evaluation`.
+   `cost`, `evaluation`, and optional `handoff` details.
 10. The assistant message is stored in `_conversations`.
 
-### Layer 3 — Orchestrator (`agent_definition.py`)
+### Layer 3  - Orchestrator (`agent_definition.py`)
 
 11. **Reset** `EdgeDispatchHooks` for this query (prevents cross-query
     token accumulation).
 12. **Sync** threshold + pricing from the settings store (picks up UI edits).
-13. **Dispatch** — `MCPRouter.analyze_query` estimates `N` (distinct tools
-    needed) and selects `D ∈ {0,1}`.
-14. **Run local agent** via `openai-agents` `Runner.run`:
-    - D=0 → resolve variant (MCP tools, no escalation tool).
-    - D=1 → escalate variant (MCP tools + `escalate_query`).
-15. **If D=1:** `_prepare_handoff` extracts the handoff prompt from the run
-    context (or builds a fallback handoff if the SLM did not call
-    `escalate_query`, logging a non-compliance warning).
-16. **Run cloud synthesiser** with the handoff prompt as input (no tools, no
-    schemas).
+13. **Run local agent** via `openai-agents` `Runner.run_streamed` with MCP
+    tools and `escalate_query` available. The local stream is consumed for
+    lifecycle/tool events while routing is decided.
+14. **Dispatch** - the orchestrator counts actual MCP tool calls and sets
+    `D ∈ {0,1}` from either the model's `escalate_query` call or the UI
+    threshold.
+15. **If D=1:** `_prepare_handoff` extracts the model handoff from the run
+    context or builds a threshold fallback handoff from captured tool records
+    and the local model output.
+16. **Run cloud synthesiser** with the handoff prompt as input (no MCP tools,
+    no full manifest). Cloud answer deltas are forwarded as SSE `token` events
+    as the model produces them.
 17. **Compute cost** via `CostModel.compute` (thesis Eq 2.4–2.6) at current
     pricing, using observed token usage from the hooks.
-18. **Evaluate** — `ArizeEvaluator.evaluate_tool_selection` (Tool F1) and
+18. **Evaluate**  - `ArizeEvaluator.evaluate_tool_selection` (Tool F1) and
     `evaluate_answer_correctness` (6-point rubric).
 19. **Log** the evaluation record and assemble trace data.
 20. Return an `OrchestratorResult` with `final_answer`, `was_escalated`,
     `tool_count`, `cost`, and `evaluation`.
 
-### Layer 4 — Back to the browser
+### Layer 4  - Back to the browser
 
 21. `streamChat` parses each SSE block, dispatching to `onToken`, `onStatus`,
     `onDone`, or `onError`.
 22. `useChat` appends tokens to the assistant message; on `done` it attaches
-    `cost`, `wasEscalated`, and `toolCount`.
-23. `MessageBubble` renders the `CostBadge` beneath the answer.
+    `cost`, `wasEscalated`, `toolCount`, and optional `handoff`.
+23. `MessageBubble` renders the `CostBadge` and, when enabled in settings, the
+    handoff details beneath the answer.
 24. `App`'s `useEffect` syncs the updated messages back into the persisted
     conversations list.
 
 ---
 
-## 7. Authentication and security
-
-> **This repository does not implement authentication, authorisation, or
-> multi-tenancy.** It is a single-user local-development prototype.
-
-### Current security posture
-
-| Concern | Current state |
-|---------|---------------|
-| Authentication | **None.** All endpoints are open. |
-| Authorisation | **None.** Any caller can read/update settings, list conversations, send queries. |
-| CORS | Whitelist of three localhost origins (`main.py:118`). Not a security control; only prevents casual browser cross-origin use. |
-| API key storage | The OpenAI key is read from `OPENAI_API_KEY` / `EDGE_HIGH_END_API_KEY` env vars. It is never logged, never sent to the frontend, and `.env*` is gitignored. |
-| Input validation | Pydantic validates request bodies; `update_settings` enforces non-negative pricing and `threshold ≥ 1`. Query strings are not sanitised beyond `.strip()` and a non-empty check. |
-| Secrets in git | None. `.gitignore` excludes `.env*`, `*.pdf`, and the private design docs. |
-| Rate limiting | None. |
-| TLS | None. Plain HTTP on localhost. |
-
-### Assumptions
-
-- The backend runs on a trusted machine; the only client is the local
-  browser dev server.
-- The OpenAI key is supplied via environment; the operator is responsible for
-  not committing it.
-- The local `llama.cpp` server has no auth (its default); the backend
-  authenticates with a placeholder `not-needed` key.
-
-### Before any production use
-
-Add an auth layer (e.g. FastAPI dependency with a bearer token), tighten CORS
-to the real frontend origin, add rate limiting, sanitise long-form query input,
-and front both services with TLS. The in-memory stores must also be replaced
-(see [§14](#14-key-design-decisions)).
-
----
-
-## 8. Configuration and environment
+## 7. Configuration and environment
 
 All configuration lives in `server/config.py` as module-level constants read
 from environment variables with sensible defaults. There is no `.env` loader;
@@ -535,48 +394,48 @@ Only one is **required** for full functionality:
 
 ---
 
-## 9. AI and data flow
+## 8. AI and data flow
 
 ### The dispatch decision (thesis Eq 2.1)
 
-`MCPRouter.analyze_query` (`mcp_router.py:301`) is a **deterministic Python
-heuristic**:
+The local SLM is authoritative for tool choice. `MCPRouter` builds a connected
+tool catalog and schema registry from the MCP servers available at startup, but
+does not score the query with keywords. Per-query tool selection and handoff
+schema inclusion are dynamic.
 
-1. For each tool in the compact manifest, count keyword matches against the
-   query (tool affinities + archetype keywords in `ARCHETYPE_KEYWORDS`).
-2. Count multi-part query signals (` and `, `?`, regex for compound questions).
-3. `estimated = max(matched_tools, distinct_sources, 1)`, bumped up for
-   multi-part questions, capped at the manifest size.
-4. `D = 1 if estimated >= threshold else 0`.
-
-The heuristic (not the SLM) is authoritative. This diverges from the thesis
-(see [§14](#14-key-design-decisions)) but makes dispatch deterministic and
-decouples routing correctness from SLM compliance.
+1. The local agent receives the compact connected-tool catalog and current UI
+   threshold.
+2. The model invokes only the MCP tools it decides are necessary.
+3. Runtime hooks count actual MCP calls.
+4. `D = 1` if the model calls `escalate_query` or actual MCP calls reach the
+   threshold; otherwise `D = 0`.
+5. Handoff evidence includes `tool`, `reason`, `schema`, and `result` for each
+   invoked tool. The schema entries are pulled dynamically from the registry for
+   the tools actually invoked, not preselected at startup.
 
 ### Agent prompts
 
-Three instruction templates in `agent_definition.py`:
+Instruction templates in `agent_definition.py`:
 
-- **`LOCAL_AGENT_RESOLVE_INSTRUCTIONS`** tells the SLM the query was routed
-  local, gives it the compact tool manifest, and explicitly states it cannot
-  escalate (no `escalate_query` tool is attached).
-- **`LOCAL_AGENT_ESCALATE_INSTRUCTIONS`** tells the SLM the query requires
-  cloud synthesis, gives it the manifest, and instructs it to gather evidence
-  then call `escalate_query` with `{query, selected_tools, rationale,
-  evidence_json}`.
+- **`LOCAL_AGENT_ESCALATE_INSTRUCTIONS`** is the active model-driven local agent
+  prompt. It gives the SLM the compact manifest, tells it to record reasons and
+  schemas for invoked tools, and instructs it to call `escalate_query` when the
+  actual MCP tool-call threshold is reached.
+- **`LOCAL_AGENT_RESOLVE_INSTRUCTIONS`** is retained for compatibility with
+  older callers but is not the active routing path.
 - **`HIGH_END_AGENT_INSTRUCTIONS`** tells the cloud model it is a pure
   synthesiser, must use only the provided evidence, must not fabricate, and has
   no MCP tools.
 
-The `tool_manifest` is interpolated into the local agents' instructions at
-agent-construction time (`create_local_resolve_agent`, etc.).
+The `tool_manifest` is interpolated into the local agent instructions at
+agent-construction time.
 
 ### Model calls
 
 - **Local:** `OpenAIProvider` pointing at `EDGE_LOCAL_BASE_URL`
   (`llama.cpp`, OpenAI-compatible). Model name `EDGE_LOCAL_MODEL_NAME`,
-  temperature `0.0`. The `openai-agents` SDK `Runner.run` drives the agent
-  loop (tool calls → LLM → tool calls … up to `MAX_TURNS_LOCAL`).
+  temperature `0.0`. The `openai-agents` SDK `Runner.run_streamed` drives the
+  agent loop (tool calls -> LLM -> tool calls ... up to `MAX_TURNS_LOCAL`).
 - **Cloud:** `OpenAIProvider` pointing at `EDGE_HIGH_END_BASE_URL`. Model
   `gpt-4o`, temperature `0.3`. Receives only the handoff prompt as input.
 
@@ -586,20 +445,19 @@ agent-construction time (`create_local_resolve_agent`, etc.).
 User query Q
     │
     ▼
-MCPRouter.analyze_query(Q, manifest)
+Runner.run(local_dispatch_agent, input=Q, context=run_context)
     │
-    ├── estimated_tool_count N
-    ├── required_tools Ŝ(Q)
-    └── route_decision D ∈ {local, escalated}
+    ├── model-selected MCP calls
+    ├── optional escalate_query call
+    └── EdgeDispatchHooks actual_mcp_calls
     │
     ▼
-Runner.run(starting_agent, input=Q, context=run_context)
+Orchestrator compares actual_mcp_calls with threshold
     │
-    ├── Local agent invokes MCP tools (search_documents, db_lookup, …)
-    │   └── evidence E collected
+    ├── [D=0] use local final answer
     │
-    └── [D=1 only] escalate_query() packages H = {Q, Ŝ(Q), rationale, E}
-            and stores it in run_context
+    └── [D=1] use model handoff or build threshold fallback
+            H = {Q, Ŝ(Q), rationale, E}
     │
     ▼ [D=1 only]
 Runner.run(high_end_agent, input=H.to_prompt())
@@ -623,7 +481,11 @@ OrchestratorResult { final_answer, was_escalated, cost, evaluation, … }
 
 - **Input (API):** `{ query: str, conversation_id?: str, tool_threshold?: int }`.
 - **Output (SSE `done`):** `{ conversation_id, was_escalated, tool_count,
-  threshold, cost: CostBreakdown, evaluation: { tool_selection, answer_correctness } }`.
+  threshold, cost: CostBreakdown, evaluation: { tool_selection, answer_correctness },
+  handoff?: { query, selected_tools, rationale, evidence, tool_threshold, prompt } }`.
+- **Handoff evidence:** each invoked-tool entry should include `tool`, `reason`,
+  `schema`, and `result`; threshold fallback handoffs also include
+  `local_model_output`.
 - **Side outputs:** OpenInference spans to Phoenix; an evaluation record in
   `_evaluation_records` (surfaced via `GET /api/evaluations`).
 
@@ -643,13 +505,13 @@ saving versus sending every schema to the cloud.
 
 ---
 
-## 10. External integrations
+## 9. External integrations
 
 | Integration | Where used | Why |
 |-------------|------------|-----|
 | **OpenAI API** (`openai` SDK) | `agent_definition.py` cloud agent; instrumented by `observability.py` | The cloud frontier model for synthesis (D=1). |
 | **`llama.cpp` server** | `agent_definition.py` local agents via `OpenAIProvider` | Serves the local SLM with an OpenAI-compatible API on `:8080`. User-installed and user-started. |
-| **`openai-agents` SDK** | `agent_definition.py`, `observability.py` | Agent abstraction, `Runner.run` loop, `RunHooks`, `function_tool`, `MCPServer` plumbing. |
+| **`openai-agents` SDK** | `agent_definition.py`, `observability.py` | Agent abstraction, `Runner.run_streamed` loop, `RunHooks`, `function_tool`, `MCPServer` plumbing. |
 | **MCP (Model Context Protocol)** | `server/main.py`, `mcp_server_*` | Tool exposure to the local agents. Three stub servers over stdio. |
 | **`mcp.server.fastmcp.FastMCP`** | `mcp_server_*/*/__main__.py` | The library that turns a Python module into an MCP server speaking JSON-RPC over stdio. |
 | **Arize Phoenix** | `server/observability.py` | Local trace store + UI. Auto-launched in a background thread. Stores data in a self-contained SQLite DB at `~/.phoenix/`. |
@@ -664,7 +526,7 @@ lives outside the repo.
 
 ---
 
-## 11. Development workflow
+## 10. Development workflow
 
 ### First-time setup
 
@@ -694,14 +556,14 @@ export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
 | Typecheck frontend | `npx tsc --noEmit` | `frontend/` |
 | Lint backend | `uv run ruff check .` | Repo root |
 | Run a single MCP stub (sanity) | `uv run python -m mcp_server_db` | Repo root |
-| Smoke-test the heuristic | See the inline script in `README.md` → "Try it without models" | Repo root |
+| Smoke-test manifest/schema helpers | See the inline script in `README.md` → "Try the manifest without models" | Repo root |
 | Run tests | `uv run pytest` (none exist yet) | Repo root |
 
 ### Where to make changes safely
 
 | Change | File(s) to edit | Gotchas |
 |--------|-----------------|---------|
-| Dispatch heuristic / keyword tables | `server/mcp_router.py` (`ARCHETYPE_KEYWORDS`, `_estimate_distinct_tools`) | Affects routing for every query; sanity-test with the README script. |
+| Tool catalog / schemas | `server/mcp_router.py` (`build_manifest_from_servers`, `get_tool_schema`) | Startup builds the connected-tool registry; per-query handoffs include schemas only for actually invoked tools. |
 | Tool threshold default | `server/config.py` (`DEFAULT_TOOL_THRESHOLD`) or env `EDGE_TOOL_THRESHOLD` | UI overrides persist in localStorage. |
 | Pricing default | `server/config.py` (`DEFAULT_PRICE_INPUT_PER_MTOK` / `..._OUTPUT_...`) | UI edits mirror to the in-memory store and localStorage. |
 | Agent instructions / prompts | `server/agent_definition.py` (`*_INSTRUCTIONS` constants) | The manifest is interpolated at agent construction; rebuilds require a backend restart. |
@@ -711,11 +573,12 @@ export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
 | Frontend SSE handling | `frontend/src/lib/api.ts` (`streamChat`) and `hooks/useChat.ts` | New `event` types need a branch in both files. |
 | Theme / colours | `frontend/tailwind.config.js` (`edge-*` palette) | `index.css` references the same tokens. |
 
-### Making changes — general guidance
+### Making changes  - general guidance
 
 - **Backend:** restart `uvicorn` (or rely on `--reload`). The orchestrator is
-  constructed once at startup, so changes to agent definitions, the manifest,
-  or MCP configs require a full restart.
+  constructed once at startup, so changes to agent definitions or MCP configs
+  require a full restart. Per-query selected tools and handoff schema subsets
+  are generated dynamically during each chat run.
 - **Frontend:** Vite hot-reloads on save. Changes to `useLocalStorage` keys
   require clearing localStorage to see the new shape.
 - **Settings:** threshold/pricing changes via the UI persist in both the
@@ -724,111 +587,18 @@ export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
 
 ---
 
-## 12. Testing and quality
+## 11. Key design decisions
 
-### Current approach
-
-**There is no automated test suite.** `pyproject.toml` lists `pytest` and
-`ruff` as dev dependencies, but no test files, `conftest.py`, or `tests/`
-directory exist. The frontend has `eslint` configured
-(`eslint.config.js`) and TypeScript typechecking via `tsc -b`.
-
-### Quality gates available
-
-| Layer | Tool | Command | Status |
-|-------|------|---------|--------|
-| Backend syntax | `py_compile` / `python -c "import server.main"` | manual | Used during build verification. |
-| Backend lint | `ruff` | `uv run ruff check .` | Available; not wired into a pre-commit. |
-| Backend tests | `pytest` | `uv run pytest` | **No tests exist.** |
-| Frontend types | `tsc` | `npx tsc --noEmit` | Available. |
-| Frontend lint | `eslint` | `npm run lint` | Available. |
-| Frontend tests | none | — | None configured (no Vitest/Jest). |
-| End-to-end | manual | `curl /api/health`, `/api/settings`, send a chat message | Documented in README. |
-
-### Manual verification patterns
-
-- **No-model smoke test:** the routing heuristic and cost model can be
-  exercised without any LLM running (see README → "Try it without models").
-  Useful for validating dispatch changes.
-- **Live smoke test:** `curl /api/health` and `curl /api/settings` (check
-  `mcp_server_count == 3`); send the thesis example query and verify the cost
-  badge appears.
-- **Phoenix traces:** open `http://localhost:6006` to inspect OpenInference
-  spans for cloud calls.
-
-### Known gaps
-
-- No unit tests for `MCPRouter.analyze_query`, `CostModel.compute`, or the
-  `ArizeEvaluator` rubric, which are the highest-value targets for a first
-  test pass.
-- No integration test for the SSE streaming path.
-- No frontend component tests.
-- No CI pipeline. Lint and typecheck must be run manually.
-
----
-
-## 13. Deployment and runtime
-
-### Build artefacts
-
-- **Frontend:** `npm run build` produces static assets in `frontend/dist/`
-  (gitignored). Serve them with any static host or a reverse proxy in front of
-  FastAPI.
-- **Backend:** no build step. `uv run` executes from source against the
-  project venv. For packaging, `pyproject.toml` declares `hatchling` with
-  `packages = ["server"]`.
-
-### Expected runtime environment
-
-| Component | Default | Notes |
-|-----------|---------|-------|
-| Backend | `localhost:8000` | `uvicorn` with `--reload` for dev. |
-| Frontend (dev) | `localhost:5173` | Vite dev server; proxies `/api` to `:8000`. |
-| Frontend (prod) | Same origin as backend (or a static host + reverse proxy). | Not configured in this repo. |
-| Local SLM | `localhost:8080` | `llama.cpp` server, OpenAI-compatible. User-operated. |
-| Phoenix UI | `localhost:6006` | Auto-launched by the orchestrator. SQLite at `~/.phoenix/`. |
-
-### Hosting and operational considerations
-
-- **No containerisation.** There is no Dockerfile or `docker-compose.yml`.
-  The expected environment is a developer machine (macOS or Linux).
-- **State is in-memory.** Conversations (`chat.py:31`), settings
-  (`settings.py:25`), and evaluation records (`observability.py`) are all
-  Python dicts/lists. A backend restart wipes them. The frontend mitigates
-  this for conversations by persisting to localStorage, but server-side
-  history is ephemeral.
-- **Phoenix data persists** at `~/.phoenix/` (outside the repo), so traces
-  survive backend restarts.
-- **MCP subprocesses** are spawned by the backend and must resolve
-  `python -m mcp_server_*` from the repo root, so run the backend from the repo
-  root, not from inside `server/`.
-- **Scaling:** the single-process, in-memory design is intentionally limited
-  to one user. Horizontal scaling would require externalising state, the MCP
-  servers, and the Phoenix collector.
-
-### Server start-up order
-
-1. `llama.cpp` server (`:8080`) — optional but needed for any local route.
-2. Backend (`:8000`) — auto-launches Phoenix (`:6006`) and the three MCP stubs.
-3. Frontend (`:5173`) — proxies API calls to the backend.
-
----
-
-## 14. Key design decisions
-
-### 1. Heuristic-authoritative dispatch (diverges from thesis Eq 2.1)
+### 1. Model-driven dispatch with threshold enforcement
 
 The thesis makes the **SLM** authoritative for the dispatch decision. This
-prototype makes the **Python heuristic** authoritative and implements it with
-two local-agent variants (resolve / escalate). The heuristic picks which
-variant runs, so the SLM cannot override the route.
+prototype now follows that direction: the local model chooses MCP tools from
+the compact manifest and can call `escalate_query` itself.
 
-The reason is determinism: evaluation needs reproducible routing, and SLM
-function-calling compliance is unreliable on the off-the-shelf stand-in model.
-The cost is losing the SLM's semantic understanding of query complexity.
-Empirical comparison is deferred to Thesis B. If the escalate-variant SLM
-fails to call `escalate_query`, the orchestrator builds a minimal handoff from
-its raw output and logs a non-compliance warning (`agent_definition.py:676`).
+The UI threshold remains the manual control. The backend counts actual MCP tool
+calls from runtime hooks and escalates when the count reaches the threshold,
+even if the SLM answered directly. In that fallback path, the orchestrator
+builds a handoff from captured tool records and the local output.
 
 ### 2. Input + output pricing (extends the thesis)
 
@@ -839,21 +609,21 @@ per-query cost badge would understate real spend. The `C_mono` output estimate
 is proxied from observed output (cloud when escalated, local when not), which
 is an approximation.
 
-### 3. Two local-agent variants instead of one with a conditional tool
+### 3. Single local dispatch agent with `escalate_query`
 
-A single agent with a conditional `escalate_query` tool would let the SLM
-choose whether to escalate, re-introducing the SLM-authoritative path. Two
-pre-configured variants make the heuristic's decision binding at the agent
-construction level.
+The active path uses one local dispatch agent with MCP tools and
+`escalate_query` available. This keeps semantic tool choice in the local model
+while preserving a deterministic threshold override in the backend.
 
 ### 4. Stub MCP servers
 
 Three in-memory stubs (`mcp_server_{docs,db,wiki}`) stand in for real
-enterprise sources. They ship representative data (e.g. `REQ-2024-1052`, the
-expedited-review policy) so the pipeline runs end-to-end without external
-dependencies. This keeps the prototype self-contained and reproducible. The
-trade-off is trivial tool behaviour (keyword search over a few hard-coded
-records). Real MCP servers can be wired in via `MCP_SERVER_CONFIGS`.
+enterprise sources. They ship representative HR leave data (for example
+`EMP-1001`, leave-balance documents, employee records, and policy wiki pages)
+so the pipeline runs end-to-end without external dependencies. This keeps the
+prototype self-contained and reproducible. The trade-off is trivial tool
+behaviour over a few hard-coded records. Real MCP servers can be wired in via
+`MCP_SERVER_CONFIGS`.
 
 ### 5. Phoenix auto-launch
 
@@ -871,77 +641,3 @@ Conversations, settings, and evaluation records are Python dicts. No database.
 This minimises moving parts for a thesis prototype, but means no persistence
 across restarts (except frontend localStorage), no concurrency beyond a single
 user, and no audit trail.
-
-### 7. Simulated token streaming
-
-The backend waits for the full answer from the orchestrator, then chunks it
-into ~20 `token` events with 30 ms delays (`chat.py:139`). It does not stream
-the LLM output as it is produced, because `openai-agents` `Runner.run` returns
-a completed result and true token streaming would require hooking the SDK's
-streaming API. The UI shows streaming, but the first token arrives only after
-the full pipeline completes.
-
-### 8. Heuristic answer rubric
-
-`ArizeEvaluator.evaluate_answer_correctness` uses string-matching heuristics
-for the 6-point rubric (factual accuracy, evidence traceability, query
-resolution, constraint discipline). The thesis prescribes a judge LLM or human
-reviewers. Full evaluation is deferred to Thesis B.
-
----
-
-## 15. Troubleshooting and operational notes
-
-### Common issues and where to look
-
-| Symptom | Likely cause | Where to look |
-|---------|--------------|---------------|
-| `ModuleNotFoundError: No module named 'agents'` | Not using the project venv | Run `uv sync`, prefix commands with `uv run`. |
-| `ConnectionRefusedError` from `llama.cpp` | Local model not running or wrong URL | `curl $EDGE_LOCAL_BASE_URL/models`; check `EDGE_LOCAL_BASE_URL`. Backend still starts; local-routed queries will fail. |
-| `mcp_server_count == 0` in `/api/settings` | MCP stubs failed to connect | Backend startup logs (`Failed to connect MCP server <name>`). Run `uv run python -m mcp_server_db` directly. Run backend from repo root. |
-| `mcp_server_count < 3` | One stub failed; the others continued | Same logs; the manifest only contains tools from connected servers. |
-| OpenAI auth error on escalated queries | `OPENAI_API_KEY` not set or invalid | `export OPENAI_API_KEY=...`; local queries still work. |
-| Phoenix first-run warning: `server took too long to start` | Alembic migrations building `~/.phoenix/` (~8 s) | Non-fatal; spans still collected. Next start is fast. Pre-warm with `uv run python -c "import phoenix as px; px.launch_app(); input('press Enter')"` (see README). |
-| Port 6006 in use | Phoenix or another process holds it | `lsof -i :6006` then `kill <pid>`, or set `ARIZE_PHOENIX_ENDPOINT=http://localhost:6007`. |
-| CORS error in browser | Frontend origin not in the allow-list | Add the origin to `allow_origins` in `server/main.py:118` and restart. |
-| TypeScript build errors | TS 5.7+ deprecation warnings | Ensure `tsconfig.app.json` has `"ignoreDeprecations": "6.0"`. |
-| `huggingface-cli: command not found` | HF CLI not installed | `pip install huggingface_hub`. |
-| Cost badge shows `saved $0.00` on an escalated query | Cloud output tokens or handoff size swamped the schema saving | Inspect `cost.c_ed` vs `cost.c_mono` in the `done` payload; check pricing in Settings. |
-| Query routed local but the answer is an error | Local SLM failed (often function-calling non-compliance) | Backend logs (`Local agent failed: ...`); the orchestrator returns an error result, not a crash. |
-
-### Debugging guidance
-
-- **Routing decisions:** `MCPRouter._decision_history` records every
-  `analyze_query` result; inspect via a debugger or add a temporary endpoint.
-- **Token usage:** `EdgeDispatchHooks.get_token_usage()` aggregates per-turn
-  input/output tokens; `get_summary()` returns the full trace summary.
-- **Cloud calls:** every OpenAI call is an OpenInference span in Phoenix
-  (`http://localhost:6006`). Filter by the `EdgeDispatch Pipeline` workflow
-  name.
-- **Evaluation records:** `GET /api/evaluations` returns the aggregate summary
-  and per-query records (Tool F1, rubric scores, route, tool count).
-- **Handoff compliance:** search the backend logs for
-  `did not call escalate_query`, which indicates the SLM ignored the
-  dispatcher's D=1 decision and the fallback handoff was used.
-- **Settings drift:** the orchestrator syncs from the settings store at the
-  start of every query (`_sync_config_from_settings`), so UI edits take effect
-  on the next query without a restart. Env-var defaults only apply at first
-  boot.
-
-### Where to look when something breaks
-
-| Layer | First stop |
-|-------|-----------|
-| Frontend render / state | `App.tsx`, `useChat.ts`, browser console + DevTools Application → localStorage. |
-| API contract / SSE parsing | `frontend/src/lib/api.ts` (`streamChat`, `mapSettings`, `mapDone`) and `server/routes/chat.py`. |
-| Routing logic | `server/mcp_router.py` (`analyze_query`, `ARCHETYPE_KEYWORDS`). |
-| Agent behaviour | `server/agent_definition.py` (instructions, `make_escalation_function`, `_prepare_handoff`). |
-| Cost numbers | `server/cost.py` (`CostModel.compute`, `SCHEMA_TOKENS_PER_TOOL`, `INSTRUCTION_TOKENS`). |
-| Metrics | `server/observability.py` (`ArizeEvaluator`, `EdgeDispatchHooks`). |
-| MCP tool exposure | `server/main.py` (`_build_mcp_servers`), `server/config.py` (`MCP_SERVER_CONFIGS`), and the `mcp_server_*` packages. |
-| Observability UI | `http://localhost:6006` (Phoenix). |
-
----
-
-*End of document. For setup steps and command examples, see
-[`README.md`](./README.md).*

@@ -2,14 +2,12 @@
 EdgeDispatch - Agent Definition Module
 
 Architecture:
-  - Local Agent (two variants): SLM on consumer hardware (llama.cpp).
-      * resolve variant: used when the dispatcher decides D=0 (local). It
-        invokes MCP tools and answers directly; it has no escalation tool.
-      * escalate variant: used when the dispatcher decides D=1 (cloud). It
-        invokes MCP tools to gather evidence, then calls `escalate_query` to
-        package a structured handoff document for the cloud tier.
-    The Python dispatch heuristic is authoritative (thesis Eq 2.1): it selects
-    which variant runs, so the SLM cannot override the routing decision.
+  - Local Agent: SLM on consumer hardware (llama.cpp). It receives the compact
+    MCP manifest, chooses which MCP tools to invoke, and either answers locally
+    or calls `escalate_query` to package a structured handoff document.
+    The UI-configured threshold is the manual override: if the actual MCP tool
+    call count reaches the threshold, the backend escalates even if the model
+    did not call `escalate_query`.
   - High-End Agent: Cloud frontier model (OpenAI), receives only structured
     handoff documents for complex synthesis. No MCP tools, no schemas.
   - Handoff: Conditional escalation packaging evidence + rationale.
@@ -20,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
 
 from pydantic import BaseModel
 
@@ -30,7 +28,6 @@ from agents import (
     RunConfig,
     Runner,
     ModelSettings,
-    RunResult,
 )
 from agents.mcp import MCPServer
 from agents import function_tool, RunContextWrapper
@@ -81,11 +78,10 @@ def create_high_end_model_provider() -> OpenAIProvider:
 # Agent Instructions
 # ──────────────────────────────────────────────
 
-# Used when the dispatcher has decided D=0 (local resolution). The agent has
-# MCP tools but NO escalation tool. It cannot override the routing decision.
+# Legacy local-only instructions retained for compatibility with older callers.
 LOCAL_AGENT_RESOLVE_INSTRUCTIONS = """You are the EdgeDispatch local dispatch agent running on consumer hardware.
-The dispatcher has determined this query can be resolved LOCALLY (tool requirement
-is below the escalation threshold of {tool_threshold}).
+Use the MCP tool manifest below to decide which tools are necessary. Invoke only
+the tools needed to answer the user's query.
 
 Your responsibilities:
 1. Analyze the user query against the tool manifest below.
@@ -100,22 +96,28 @@ Tool Manifest (compact descriptions of available tools):
 If a tool returns no useful evidence, say so honestly rather than fabricating.
 """
 
-# Used when the dispatcher has decided D=1 (cloud escalation). The agent has
-# MCP tools AND the escalate_query tool. It gathers evidence, then hands off.
+# Model-driven dispatch instructions. The agent has MCP tools and the
+# `escalate_query` function; the UI threshold is the manual routing control.
 LOCAL_AGENT_ESCALATE_INSTRUCTIONS = """You are the EdgeDispatch local dispatch agent running on consumer hardware.
-The dispatcher has determined this query REQUIRES cloud synthesis (tool requirement
-meets or exceeds the escalation threshold of {tool_threshold}).
+You decide which MCP tools are needed. There is no keyword router. The current
+manual threshold is {tool_threshold} actual MCP tool call(s).
 
 Your responsibilities:
 1. Analyze the user query against the tool manifest below.
-2. Invoke the necessary MCP tools to gather all relevant evidence.
-3. Once evidence is collected, call the `escalate_query` tool with:
+2. Invoke only the MCP tools needed to retrieve relevant evidence.
+3. For every tool you invoke, record:
+     - tool: exact tool name
+     - reason: why this tool was needed for the query
+     - schema: the tool schema from the manifest
+     - result: the returned evidence
+4. If you invoked {tool_threshold} or more MCP tools, call `escalate_query` with:
      - query: The original user query
      - selected_tools: JSON array of tool names you invoked
-     - rationale: Why cloud synthesis is needed
-     - evidence_json: JSON array of the evidence objects retrieved from the tools
-4. Do NOT attempt to write the final answer yourself — the cloud synthesis agent
-   will produce the final answer from your handoff.
+     - rationale: Why cloud synthesis is needed, based on the actual tools invoked
+     - evidence_json: JSON array of the evidence objects described above
+5. If you invoked fewer than {tool_threshold} MCP tools and have enough evidence,
+   synthesize the final answer locally. Cite which tool/source supports each fact.
+6. Do not list tools you did not actually invoke.
 
 Tool Manifest (compact descriptions of available tools):
 {tool_manifest}
@@ -160,10 +162,10 @@ class EdgeDispatchHandoffInput(BaseModel):
         return (
             f"## Handoff from EdgeDispatch Local Agent\n\n"
             f"### Original Query\n{self.query}\n\n"
-            f"### Selected Tools\n{tools_str}\n\n"
+            f"### Tools Invoked\n{tools_str}\n\n"
             f"### Escalation Rationale\n"
             f"Tool threshold was {self.tool_threshold}. "
-            f"Query required {len(self.selected_tools)} tool(s): {self.rationale}\n\n"
+            f"Handoff includes {len(self.selected_tools)} invoked tool(s): {self.rationale}\n\n"
             f"### Retrieved Evidence\n{evidence_str}\n\n"
             f"Please synthesize a final answer using the evidence above."
         )
@@ -363,15 +365,15 @@ class EdgeDispatchOrchestrator:
     """
     Main orchestrator for the EdgeDispatch hybrid architecture.
 
-    The Python dispatch heuristic (MCPRouter) is authoritative (thesis Eq 2.1):
-    it decides D in {0,1} and selects which local-agent variant runs. This makes
-    routing deterministic and decouples dispatch correctness from SLM compliance.
+    Dispatch is model-driven: the local SLM chooses MCP tools from the manifest.
+    The UI-configured threshold is enforced against actual MCP calls after the
+    local run.
 
     Lifecycle per query:
       1. Reset tracing hooks.
-      2. Analyze the query -> (D, required_tools) via MCPRouter.
-      3. Run the resolve-variant (D=0) or escalate-variant (D=1) local agent.
-      4. If D=1: package handoff, build escalation sandbox manifest, run the
+      2. Run the local agent with MCP tools and the escalation tool available.
+      3. Count actual MCP tool calls and compare with the UI threshold.
+      4. If escalated: package handoff, build escalation sandbox manifest, run the
          high-end synthesizer with the handoff prompt.
       5. Compute the cost breakdown (thesis Eq 2.4-2.6) at current UI pricing.
       6. Evaluate tool selection + answer correctness (thesis Sec 4.6-4.7).
@@ -395,8 +397,8 @@ class EdgeDispatchOrchestrator:
 
         # Wire observability: instrument the OpenAI client for OpenInference
         # spans and auto-launch the Phoenix debug UI.
-        self.evaluator.instrument_openai()
         self.evaluator.launch_phoenix()
+        self.evaluator.instrument_openai()
 
         # Build tool manifest from MCP servers
         self.tool_manifest = self.router.build_manifest_from_servers(mcp_servers)
@@ -434,12 +436,38 @@ class EdgeDispatchOrchestrator:
     # ── Public API ────────────────────────────
 
     async def process_query(self, query: str) -> OrchestratorResult:
-        """
-        Process a user query through the EdgeDispatch pipeline (Algorithm 1).
+        """Process a query and return only the completed orchestrator result."""
+        result: OrchestratorResult | None = None
+        async for event in self.process_query_stream(query):
+            if event.get("event") == "result":
+                result = event["result"]
 
-        The dispatch heuristic is authoritative: it selects the local-agent
-        variant and therefore the route. Cost is computed at the UI-configured
-        pricing; evaluation metrics are computed per query.
+        if result is None:
+            return OrchestratorResult(
+                final_answer="Error during processing: orchestrator produced no result.",
+                was_escalated=False,
+                tool_count=0,
+                tool_threshold=self.tool_threshold,
+                trace_data={"error": "missing_orchestrator_result"},
+            )
+        return result
+
+    async def process_query_stream(
+        self,
+        query: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Process a user query and yield final-answer tokens as the active answer
+        model produces them.
+
+        The local model chooses tools from the manifest. The backend enforces
+        the UI threshold against actual MCP tool calls and escalates when that
+        threshold is reached or the model explicitly calls `escalate_query`.
+
+        Yields:
+          - {"event": "status", "data": {...}}
+          - {"event": "token", "data": "..."}
+          - {"event": "result", "result": OrchestratorResult(...)}
         """
         # Reset tracing state for this query (prevents cross-query accumulation).
         self.hooks = EdgeDispatchHooks()
@@ -447,28 +475,17 @@ class EdgeDispatchOrchestrator:
         # Sync pricing + threshold from the settings store (UI may have changed them).
         self._sync_config_from_settings()
 
-        # Step 1: Authoritative dispatch decision (thesis Eq 2.1)
-        tool_analysis = self.router.analyze_query(query, self.tool_manifest)
-        estimated_tools = tool_analysis["estimated_tool_count"]
-        required_tools = tool_analysis.get("required_tools", [])
-        route_decision = tool_analysis["route_decision"]
-        was_escalated = route_decision == "escalated"
-
         logger.info(
-            "Query analysis: '%s' -> route=%s, %d tools estimated, threshold=%d",
+            "Processing query with model-driven dispatch: '%s' (threshold=%d)",
             query[:80],
-            route_decision,
-            estimated_tools,
             self.tool_threshold,
         )
 
-        # Step 2: Build run context with shared state
+        # Step 1: Build run context with shared state.
         run_context: dict[str, Any] = {
             "tool_threshold": self.tool_threshold,
             "tool_manifest": self.tool_manifest,
-            "estimated_tools": estimated_tools,
-            "required_tools": required_tools,
-            "route_decision": route_decision,
+            "route_decision": "model_decided",
             "escalated": False,
             "handoff_document": None,
             "evidence": [],
@@ -476,57 +493,83 @@ class EdgeDispatchOrchestrator:
             "rationale": "",
         }
 
-        # Step 3: Run the appropriate local-agent variant
-        starting_agent = (
-            self.local_escalate_agent if was_escalated else self.local_resolve_agent
-        )
-        local_provider = (
-            self.local_escalate_provider if was_escalated else self.local_resolve_provider
-        )
-
+        # Step 2: Run the local model with MCP tools and escalation available.
         run_config = RunConfig(
-            model_provider=local_provider,
+            model_provider=self.local_escalate_provider,
             model_settings=ModelSettings(temperature=TEMPERATURE_LOCAL),
             workflow_name="EdgeDispatch Pipeline",
             trace_metadata={
                 "tool_threshold": str(self.tool_threshold),
-                "estimated_tools": str(estimated_tools),
-                "route_decision": route_decision,
+                "routing_mode": "model_driven",
                 "architecture": "EdgeDispatch Hybrid",
             },
         )
 
         try:
-            result: RunResult = await Runner.run(
-                starting_agent=starting_agent,
+            local_result = Runner.run_streamed(
+                starting_agent=self.local_escalate_agent,
                 input=query,
                 context=run_context,
                 max_turns=MAX_TURNS_LOCAL,
                 hooks=self.hooks,
                 run_config=run_config,
             )
+            # The local run decides routing. Its text is buffered so we do not
+            # leak an answer that may be superseded by threshold-based cloud
+            # synthesis.
+            local_answer_parts: list[str] = []
+            async for event in local_result.stream_events():
+                delta = self._extract_text_delta(event)
+                if delta:
+                    local_answer_parts.append(delta)
         except Exception as e:
             logger.error("Local agent failed: %s", e)
-            return OrchestratorResult(
+            final_answer = f"Error during local processing: {e}"
+            yield {"event": "token", "data": final_answer}
+            yield {"event": "result", "result": OrchestratorResult(
                 final_answer=f"Error during local processing: {e}",
                 was_escalated=False,
                 tool_count=0,
                 tool_threshold=self.tool_threshold,
-                trace_data={"error": str(e), "route_decision": route_decision},
-            )
+                trace_data={"error": str(e), "route_decision": "local_error"},
+            )}
+            return
 
-        # Step 4: Cloud synthesis (only when the dispatcher routed D=1)
+        actual_mcp_calls = self._actual_mcp_tool_calls()
+        actual_mcp_count = len(actual_mcp_calls)
+        actual_tools = self._infer_local_tools_used()
+        model_requested_escalation = bool(run_context.get("escalated"))
+        threshold_reached = actual_mcp_count >= self.tool_threshold
+        was_escalated = model_requested_escalation or threshold_reached
+        route_decision = "escalated" if was_escalated else "local"
+
+        logger.info(
+            "Local run complete: route=%s, actual_mcp_calls=%d, threshold=%d, model_requested_escalation=%s",
+            route_decision,
+            actual_mcp_count,
+            self.tool_threshold,
+            model_requested_escalation,
+        )
+
+        # Step 3: Cloud synthesis when the model requested it or the threshold was reached.
         high_end_hooks: EdgeDispatchHooks | None = None
         handoff_doc: HandoffDocument | None = None
         sandbox_manifest: dict[str, Any] | None = None
 
         if was_escalated:
+            local_output_text = str(local_result.final_output or "".join(local_answer_parts))
             handoff_prompt, selected_tools, evidence, rationale = self._prepare_handoff(
-                run_context, result, query, required_tools, tool_analysis
+                run_context,
+                local_result,
+                query,
+                actual_tools,
+                actual_mcp_count,
+                threshold_reached,
+                local_output_text=local_output_text,
             )
 
-            # Build the escalation sandbox manifest (only the needed tools in scope)
-            sandbox_manifest = self.router.create_manifest_for_escalation(required_tools)
+            # Build the escalation sandbox manifest from tools actually selected/invoked.
+            sandbox_manifest = self.router.create_manifest_for_escalation(selected_tools)
 
             # Run the high-end synthesizer with a fresh hooks instance
             high_end_hooks = EdgeDispatchHooks()
@@ -536,24 +579,46 @@ class EdgeDispatchOrchestrator:
                 workflow_name="EdgeDispatch Pipeline (Escalated)",
                 trace_metadata={
                     "tool_threshold": str(self.tool_threshold),
-                    "estimated_tools": str(estimated_tools),
+                    "actual_mcp_calls": str(actual_mcp_count),
                     "architecture": "EdgeDispatch Hybrid",
                     "stage": "high_end_synthesis",
                 },
             )
 
+            yield {
+                "event": "status",
+                "data": {
+                    "type": "synthesizing",
+                    "message": "Streaming cloud synthesis...",
+                    "tool_count": actual_mcp_count,
+                    "threshold": self.tool_threshold,
+                },
+            }
+
             try:
-                high_end_result: RunResult = await Runner.run(
+                high_end_result = Runner.run_streamed(
                     starting_agent=self.high_end_agent,
                     input=handoff_prompt,
                     max_turns=MAX_TURNS_HIGH_END,
                     hooks=high_end_hooks,
                     run_config=high_end_config,
                 )
-                final_answer = high_end_result.final_output
+                streamed_answer = False
+                cloud_answer_parts: list[str] = []
+                async for event in high_end_result.stream_events():
+                    delta = self._extract_text_delta(event)
+                    if delta:
+                        streamed_answer = True
+                        cloud_answer_parts.append(delta)
+                        yield {"event": "token", "data": delta}
+
+                final_answer = str(high_end_result.final_output or "".join(cloud_answer_parts))
+                if final_answer and not streamed_answer:
+                    yield {"event": "token", "data": final_answer}
             except Exception as e:
                 logger.error("High-end agent failed: %s", e)
                 final_answer = f"Error during cloud synthesis: {e}"
+                yield {"event": "token", "data": final_answer}
 
             handoff_doc = HandoffDocument(
                 query=query,
@@ -563,12 +628,17 @@ class EdgeDispatchOrchestrator:
                 tool_threshold=self.tool_threshold,
             )
         else:
-            final_answer = result.final_output
-            selected_tools = []
-            evidence = []
-            rationale = tool_analysis.get("rationale", "")
+            final_answer = str(local_result.final_output or "".join(local_answer_parts))
+            if final_answer:
+                yield {"event": "token", "data": final_answer}
+            selected_tools = actual_tools
+            evidence = self._build_evidence_from_tool_records(query, selected_tools)
+            rationale = (
+                f"Actual MCP tool call count was {actual_mcp_count}, below the "
+                f"threshold of {self.tool_threshold}. Resolved locally."
+            )
 
-        # Step 5: Compute the cost breakdown (thesis Eq 2.4-2.6) at current pricing
+        # Step 4: Compute the cost breakdown (thesis Eq 2.4-2.6) at current pricing
         local_usage = self.hooks.get_token_usage()
         cloud_usage = high_end_hooks.get_token_usage() if high_end_hooks else TokenUsage()
         handoff_text = handoff_doc.to_compact_prompt() if handoff_doc else ""
@@ -582,23 +652,23 @@ class EdgeDispatchOrchestrator:
             local_usage=local_usage,
         )
 
-        # Step 6: Evaluate tool selection + answer correctness (thesis Sec 4.6-4.7)
-        predicted_tools = selected_tools if was_escalated else self._infer_local_tools_used()
+        # Step 5: Evaluate tool selection + answer correctness (thesis Sec 4.6-4.7)
+        predicted_tools = selected_tools
         evaluation = self._evaluate(
             query=query,
             answer=final_answer,
             predicted_tools=predicted_tools,
-            ground_truth_tools=required_tools,
+            ground_truth_tools=actual_tools,
             evidence=evidence,
         )
 
-        # Step 7: Log evaluation + assemble trace data
+        # Step 6: Log evaluation + assemble trace data
         try:
             self.evaluator.log_evaluation(
                 query=query,
                 answer=final_answer,
                 was_escalated=was_escalated,
-                tool_count=self.hooks.tool_call_count,
+                tool_count=actual_mcp_count,
                 threshold=self.tool_threshold,
                 trace_data={
                     "cost": cost.as_dict(),
@@ -610,8 +680,10 @@ class EdgeDispatchOrchestrator:
 
         trace_data = {
             "query": query,
-            "estimated_tool_count": estimated_tools,
-            "actual_tool_count": self.hooks.tool_call_count,
+            "estimated_tool_count": 0,
+            "actual_tool_count": actual_mcp_count,
+            "actual_mcp_tool_calls": actual_mcp_calls,
+            "total_sdk_tool_count": self.hooks.tool_call_count,
             "tool_threshold": self.tool_threshold,
             "was_escalated": was_escalated,
             "route_decision": route_decision,
@@ -624,16 +696,18 @@ class EdgeDispatchOrchestrator:
             "sandbox_manifest": sandbox_manifest,
         }
 
-        return OrchestratorResult(
+        result = OrchestratorResult(
             final_answer=final_answer,
             was_escalated=was_escalated,
-            tool_count=self.hooks.tool_call_count,
+            tool_count=actual_mcp_count,
             tool_threshold=self.tool_threshold,
             handoff_document=handoff_doc,
             cost=cost,
             evaluation=evaluation,
             trace_data=trace_data,
         )
+
+        yield {"event": "result", "result": result}
 
     def set_threshold(self, threshold: int):
         """Dynamically update the tool threshold."""
@@ -649,42 +723,88 @@ class EdgeDispatchOrchestrator:
 
     # ── Internal helpers ──────────────────────
 
+    @staticmethod
+    def _extract_text_delta(event: Any) -> str:
+        """Return a Responses API text delta from an Agents SDK stream event."""
+        if getattr(event, "type", None) != "raw_response_event":
+            return ""
+
+        data = getattr(event, "data", None)
+        if getattr(data, "type", None) != "response.output_text.delta":
+            return ""
+
+        return str(getattr(data, "delta", "") or "")
+
     def _prepare_handoff(
         self,
         run_context: dict[str, Any],
-        local_result: RunResult,
+        local_result: Any,
         query: str,
-        required_tools: list[str],
-        tool_analysis: dict[str, Any],
+        actual_tools: list[str],
+        actual_mcp_count: int,
+        threshold_reached: bool,
+        local_output_text: str | None = None,
     ) -> tuple[str, list[str], list[dict[str, Any]], str]:
         """
         Extract the handoff prompt for the cloud tier.
 
-        Primary path: the escalate-variant SLM called `escalate_query`, which
-        stored the handoff prompt in run_context.
-        Fallback: if the SLM did not call escalate_query (non-compliance with
-        the dispatcher's D=1 decision), build a minimal handoff from the query
-        and the SLM's raw final output, and log a warning.
+        Primary path: the local SLM called `escalate_query`, storing selected
+        tools, rationale, and evidence in run_context.
+        Fallback: the UI threshold was reached but the model answered directly.
+        In that case, build a handoff from actual tool-call records and the raw
+        local output.
         """
-        if run_context.get("escalated") and run_context.get("handoff_document"):
-            handoff_prompt = run_context["handoff_document"]
-            selected_tools = run_context.get("selected_tools", required_tools)
-            evidence = run_context.get("evidence", [])
-            rationale = run_context.get("rationale", tool_analysis.get("rationale", ""))
+        if run_context.get("escalated"):
+            model_selected_tools = self._dedupe_tool_names(
+                run_context.get("selected_tools", [])
+            )
+            selected_tools = model_selected_tools or actual_tools
+            evidence = self._enrich_evidence(
+                run_context.get("evidence", []),
+                selected_tools,
+                query,
+            )
+            rationale = run_context.get("rationale") or (
+                f"The local model requested escalation after invoking "
+                f"{actual_mcp_count} MCP tool call(s)."
+            )
+            handoff_input = EdgeDispatchHandoffInput(
+                query=query,
+                selected_tools=selected_tools,
+                rationale=rationale,
+                evidence=evidence,
+                tool_threshold=self.tool_threshold,
+            )
+            handoff_prompt = handoff_input.to_prompt()
             return handoff_prompt, selected_tools, evidence, rationale
 
-        # Fallback: SLM was told to escalate but answered directly instead.
+        # Fallback: actual tool count reached the UI threshold but the model
+        # answered directly instead of calling escalate_query.
         logger.warning(
-            "Dispatch routed D=1 but local SLM did not call escalate_query; "
-            "building a minimal handoff from the SLM's raw output."
+            "Actual MCP tool count reached threshold but local SLM did not call "
+            "escalate_query; building a handoff from captured tool records."
         )
-        raw_output = str(local_result.final_output or "")
-        evidence = [{"tool": "local_slm_fallback", "result": raw_output}]
-        selected_tools = required_tools
+        raw_output = (
+            local_output_text
+            if local_output_text is not None
+            else str(local_result.final_output or "")
+        )
+        selected_tools = actual_tools
+        evidence = self._build_evidence_from_tool_records(query, selected_tools)
+        evidence.append({
+            "tool": "local_model_output",
+            "reason": (
+                "The local model produced a direct answer even though the actual "
+                "MCP tool-call threshold was reached."
+            ),
+            "schema": None,
+            "result": raw_output,
+        })
         rationale = (
-            f"Fallback handoff: dispatcher routed D=1 but the local SLM did not "
-            f"call escalate_query. Forwarding raw SLM output as evidence. "
-            f"{tool_analysis.get('rationale', '')}"
+            f"Actual MCP tool call count was {actual_mcp_count}, meeting or "
+            f"exceeding the threshold of {self.tool_threshold}. "
+            f"Threshold reached: {threshold_reached}. Forwarding captured tool "
+            f"evidence and local output for cloud synthesis."
         )
         fallback_input = EdgeDispatchHandoffInput(
             query=query,
@@ -694,6 +814,109 @@ class EdgeDispatchOrchestrator:
             tool_threshold=self.tool_threshold,
         )
         return fallback_input.to_prompt(), selected_tools, evidence, rationale
+
+    @staticmethod
+    def _dedupe_tool_names(tool_names: list[Any]) -> list[str]:
+        """Return non-empty tool names in first-seen order."""
+        deduped: list[str] = []
+        for name in tool_names:
+            tool_name = str(name).strip()
+            if tool_name and tool_name not in deduped:
+                deduped.append(tool_name)
+        return deduped
+
+    def _actual_mcp_tool_calls(self) -> list[str]:
+        """Return actual MCP tool-call names, preserving repeated calls."""
+        return [
+            record.tool_name
+            for record in self.hooks.tool_call_records
+            if record.tool_type == "mcp"
+        ]
+
+    def _build_evidence_from_tool_records(
+        self,
+        query: str,
+        selected_tools: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build evidence objects from captured MCP tool-call records."""
+        selected = set(selected_tools or [])
+        evidence: list[dict[str, Any]] = []
+        for record in self.hooks.tool_call_records:
+            if record.tool_type != "mcp":
+                continue
+            if selected and record.tool_name not in selected:
+                continue
+            evidence.append({
+                "tool": record.tool_name,
+                "reason": self.router.default_tool_reason(record.tool_name, query),
+                "schema": self.router.get_tool_schema(record.tool_name),
+                "result": record.result or "Tool completed, but the hook did not capture a result.",
+            })
+        return evidence
+
+    def _enrich_evidence(
+        self,
+        evidence: list[dict[str, Any]],
+        selected_tools: list[str],
+        query: str,
+    ) -> list[dict[str, Any]]:
+        """Ensure every evidence item carries a reason and invoked-tool schema."""
+        enriched: list[dict[str, Any]] = []
+        seen_tools: set[str] = set()
+
+        for item in evidence:
+            if not isinstance(item, dict):
+                enriched.append({
+                    "tool": "unknown",
+                    "reason": "The local model provided unstructured evidence.",
+                    "schema": None,
+                    "result": item,
+                })
+                continue
+
+            tool_name = str(item.get("tool") or "").strip()
+            normalized = dict(item)
+            if tool_name:
+                seen_tools.add(tool_name)
+                normalized.setdefault(
+                    "reason",
+                    self.router.default_tool_reason(tool_name, query),
+                )
+                canonical_schema = self.router.get_tool_schema(tool_name)
+                normalized["schema"] = canonical_schema or normalized.get("schema")
+            else:
+                normalized.setdefault("tool", "unknown")
+                normalized.setdefault(
+                    "reason",
+                    "The local model did not identify which tool produced this evidence.",
+                )
+                normalized.setdefault("schema", None)
+            enriched.append(normalized)
+
+        for tool_name in selected_tools:
+            if tool_name in seen_tools:
+                continue
+            matching_records = [
+                record for record in self.hooks.tool_call_records
+                if record.tool_type == "mcp" and record.tool_name == tool_name
+            ]
+            if matching_records:
+                for record in matching_records:
+                    enriched.append({
+                        "tool": tool_name,
+                        "reason": self.router.default_tool_reason(tool_name, query),
+                        "schema": self.router.get_tool_schema(tool_name),
+                        "result": record.result or "Tool completed, but the hook did not capture a result.",
+                    })
+            else:
+                enriched.append({
+                    "tool": tool_name,
+                    "reason": self.router.default_tool_reason(tool_name, query),
+                    "schema": self.router.get_tool_schema(tool_name),
+                    "result": "No captured tool result; the local model selected this tool in its handoff.",
+                })
+
+        return enriched
 
     def _infer_local_tools_used(self) -> list[str]:
         """Best-effort inference of which MCP tools the resolve agent invoked."""

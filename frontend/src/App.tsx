@@ -29,6 +29,10 @@ export default function App() {
     'edgedispatch-price-output',
     15,
   )
+  const [showHandoffDetails, setShowHandoffDetails] = useLocalStorage<boolean>(
+    'edgedispatch-show-handoff-details',
+    false,
+  )
 
   // UI state
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -148,17 +152,7 @@ export default function App() {
   )
 
   return (
-    <div className="h-screen flex bg-cyber-bg text-slate-200 antialiased">
-      {/* Background grid */}
-      <div
-        className="fixed inset-0 opacity-[0.03] pointer-events-none"
-        style={{
-          backgroundImage:
-            'linear-gradient(rgba(0,240,255,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(0,240,255,0.3) 1px, transparent 1px)',
-          backgroundSize: '60px 60px',
-        }}
-      />
-
+    <div className="latrobe-shell h-screen flex text-[#242424] antialiased">
       {/* Sidebar */}
       <Sidebar
         conversations={conversations}
@@ -170,13 +164,14 @@ export default function App() {
       />
 
       {/* Main chat area */}
-      <div className="flex-1 flex flex-col relative z-10">
+      <div className="flex-1 flex flex-col relative z-10 bg-cyber-bg border-l border-[#242424]/15">
         <ChatInterface
           conversation={activeConv}
           messages={messages}
           isStreaming={isStreaming}
           statusMessage={statusMessage}
           threshold={threshold}
+          showHandoffDetails={showHandoffDetails}
           onSend={handleSend}
           onCancel={cancelStream}
           onSettings={() => setSettingsOpen(true)}
@@ -188,8 +183,10 @@ export default function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         threshold={threshold}
+        showHandoffDetails={showHandoffDetails}
         onThresholdChange={handleThresholdChange}
         onPricingChange={handlePricingChange}
+        onShowHandoffDetailsChange={setShowHandoffDetails}
       />
     </div>
   )

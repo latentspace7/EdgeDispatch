@@ -2,8 +2,7 @@
 EdgeDispatch - MCP Router Module
 
 Handles the logic for:
-  - Tool counting from compact manifests
-  - Threshold-based routing decisions (local vs. escalation)
+  - Compact MCP tool manifests with schemas
   - Manifest and sandbox environment creation
   - Structured handoff document generation
 
@@ -15,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -33,14 +31,26 @@ class ToolManifestEntry:
     """A single entry in the compact tool manifest.
 
     Based on the EdgeDispatch thesis Section 2.2: each entry lists the tool's
-    identifier, type, content description, and question affinities.
+    identifier, type, content description, source, and compact schema.
     """
     name: str
     tool_type: str
     description: str
-    question_affinities: list[str] = field(default_factory=list)
     source_archetype: str = ""  # e.g. "document_store", "relational_db", "policy_wiki"
     mcp_server: str = ""
+    input_schema: dict[str, Any] = field(default_factory=dict)
+    output_schema: dict[str, Any] = field(default_factory=lambda: {"type": "string"})
+
+    def handoff_schema(self) -> dict[str, Any]:
+        """Compact schema included only for tools actually invoked."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "source": self.source_archetype,
+            "mcp_server": self.mcp_server,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema,
+        }
 
 
 @dataclass
@@ -86,101 +96,21 @@ class HandoffDocument:
 
 
 # ──────────────────────────────────────────────
-# Query Analysis and Tool Counting
-# ──────────────────────────────────────────────
-
-# Keywords that suggest specific tool categories
-ARCHETYPE_KEYWORDS: dict[str, list[str]] = {
-    "document_store": [
-        "document", "report", "pdf", "paper", "file", "read", "page", "chapter",
-        "section", "specification", "manual", "guide", "record", "memo",
-    ],
-    "relational_db": [
-        "status", "approval", "id", "record", "database", "lookup", "query",
-        "select", "update", "insert", "row", "table", "column", "field",
-        "req-", "ticket-", "case-",
-    ],
-    "policy_wiki": [
-        "policy", "wiki", "compliance", "regulation", "rule", "guideline",
-        "standard", "procedure", "protocol", "requirement",
-    ],
-}
-
-
-def _count_tool_mentions(query: str, manifest: list[ToolManifestEntry]) -> dict[str, int]:
-    """Count how many keywords from each tool's affinities appear in the query."""
-    query_lower = query.lower()
-    scores: dict[str, int] = {}
-
-    for entry in manifest:
-        score = 0
-        for affinity in entry.question_affinities:
-            if affinity.lower() in query_lower:
-                score += 1
-        # Also check archetype keywords
-        keywords = ARCHETYPE_KEYWORDS.get(entry.source_archetype, [])
-        for kw in keywords:
-            if kw.lower() in query_lower:
-                score += 1
-
-        if score > 0:
-            scores[entry.name] = score
-
-    return scores
-
-
-def _estimate_distinct_tools(query: str, manifest: list[ToolManifestEntry]) -> int:
-    """
-    Heuristically estimate how many distinct tool types a query needs.
-    
-    Uses:
-      1. Keyword matching against tool affinities and archetype keywords
-      2. Query complexity signals (conjunctions, multiple question marks, etc.)
-      3. Presence of identifiers suggesting structured lookups
-    """
-    scores = _count_tool_mentions(query, manifest)
-    distinct_sources = len(set(
-        e.source_archetype for e in manifest
-        if e.name in scores and scores[e.name] > 0
-    ))
-
-    # Count multi-part query signals
-    query_lower = query.lower()
-    multi_signals = sum([
-        query_lower.count(" and "),
-        query_lower.count("?"),
-        1 if re.search(r"what.*(?:and|,).*(?:what|how|which|why)", query_lower) else 0,
-    ])
-
-    # Estimate: max of (keyword-matched tools, distinct source types, 1)
-    estimated = max(len(scores), distinct_sources, 1)
-
-    # Add bonus for multi-part questions
-    if multi_signals >= 2:
-        estimated = max(estimated, 2)
-    if multi_signals >= 3:
-        estimated = max(estimated, 3)
-
-    return min(estimated, len(manifest))
-
-
-# ──────────────────────────────────────────────
 # MCP Router
 # ──────────────────────────────────────────────
 
 class MCPRouter:
     """
-    Core router implementing the EdgeDispatch tool-threshold logic.
+    Manifest and handoff helper for the EdgeDispatch tool-threshold logic.
     
     Responsibilities:
       - Build and maintain the compact tool manifest
-      - Analyze queries to estimate tool requirements
-      - Compare tool count against user-defined threshold
-      - Decide: resolve locally or escalate to high-end model
+      - Keep per-tool schema metadata for handoff evidence
+      - Build escalation manifests from the model's actual tool choices
     
-    Decision rule (per Section 2.2):
-      If N >= tool_threshold → escalate (D=1)
-      If N < tool_threshold  → resolve locally (D=0)
+    Dispatch is model-driven. The local agent decides which tools to invoke; the
+    orchestrator compares actual MCP calls against the UI-configured threshold
+    after the local run.
     """
     def __init__(self, threshold: int = DEFAULT_TOOL_THRESHOLD):
         self.threshold = threshold
@@ -192,7 +122,7 @@ class MCPRouter:
         Build a compact tool manifest from connected MCP servers.
 
         This creates a text representation of available tools that the local
-        SLM can read to make dispatch decisions without seeing full schemas.
+        SLM can read to choose tools, including compact input/output schemas.
 
         Args:
             mcp_servers: List of MCPServer instances
@@ -213,43 +143,61 @@ class MCPRouter:
             if source == "document_store":
                 self._add_manifest_entry(
                     "search_documents", "search",
-                    "Search across PDFs, DOCX files, and technical reports",
-                    ["document", "report", "pdf", "paper", "file", "find", "search"],
+                    "Search employee leave balances, leave statements, and HR documents",
                     source, server_name,
+                    self._single_string_param_schema(
+                        "query",
+                        "Free-text search query over HR leave documents.",
+                    ),
                 )
                 self._add_manifest_entry(
                     "get_document", "retrieval",
-                    "Retrieve a specific document by ID or title",
-                    ["get", "retrieve", "fetch", "read", "open"],
+                    "Retrieve a specific HR document or employee leave statement by ID",
                     source, server_name,
+                    self._single_string_param_schema(
+                        "doc_id",
+                        "Document identifier, for example LEAVE-EMP-1001.",
+                    ),
                 )
 
             elif source == "relational_db":
                 self._add_manifest_entry(
                     "db_lookup", "query",
-                    "Run SQL queries against approval records and structured metadata",
-                    ["status", "approval", "id", "req-", "ticket", "case", "lookup", "record"],
+                    "Look up employee records and structured HR metadata",
                     source, server_name,
+                    self._single_string_param_schema(
+                        "record_id",
+                        "Employee identifier, for example EMP-1001.",
+                    ),
                 )
                 self._add_manifest_entry(
                     "db_search", "search",
-                    "Full-text search across database fields",
-                    ["find", "search", "query", "filter", "list"],
+                    "Full-text search across employee database fields",
                     source, server_name,
+                    self._single_string_param_schema(
+                        "query",
+                        "Search terms such as employee name, department, role, gender, or manager.",
+                    ),
                 )
 
             elif source == "policy_wiki":
                 self._add_manifest_entry(
                     "wiki_search", "search",
-                    "Search policy wiki pages by keyword or topic",
-                    ["policy", "wiki", "compliance", "rule", "guideline", "regulation"],
+                    "Search HR policy wiki pages by keyword or topic",
                     source, server_name,
+                    self._single_string_param_schema(
+                        "query",
+                        "Search terms for HR policy wiki pages.",
+                    ),
                 )
                 self._add_manifest_entry(
                     "wiki_get_page", "retrieval",
-                    "Retrieve a specific wiki page by title",
-                    ["page", "read", "get", "retrieve", "view"],
+                    "Retrieve a specific HR policy wiki page by title",
                     source, server_name,
+                    self._single_string_param_schema(
+                        "title",
+                        "Policy wiki page slug, for example annual-leave-policy.",
+                    ),
                 )
 
         # Build the manifest string
@@ -259,8 +207,8 @@ class MCPRouter:
                     "name": e.name,
                     "type": e.tool_type,
                     "description": e.description,
-                    "affinities": e.question_affinities,
                     "source": e.source_archetype,
+                    "schema": e.handoff_schema(),
                 }
                 for e in self.manifest
             ],
@@ -272,19 +220,36 @@ class MCPRouter:
         name: str,
         tool_type: str,
         description: str,
-        affinities: list[str],
         source: str,
         server: str,
+        input_schema: dict[str, Any] | None = None,
+        output_schema: dict[str, Any] | None = None,
     ):
         """Add an entry to the manifest."""
         self.manifest.append(ToolManifestEntry(
             name=name,
             tool_type=tool_type,
             description=description,
-            question_affinities=affinities,
             source_archetype=source,
             mcp_server=server,
+            input_schema=input_schema or {},
+            output_schema=output_schema or {"type": "string"},
         ))
+
+    @staticmethod
+    def _single_string_param_schema(name: str, description: str) -> dict[str, Any]:
+        """Build the compact JSON schema used by the stub single-argument tools."""
+        return {
+            "type": "object",
+            "properties": {
+                name: {
+                    "type": "string",
+                    "description": description,
+                },
+            },
+            "required": [name],
+            "additionalProperties": False,
+        }
 
     @staticmethod
     def _infer_archetype(server_name: str) -> str:
@@ -300,43 +265,20 @@ class MCPRouter:
 
     def analyze_query(self, query: str, manifest_str: str | None = None) -> dict[str, Any]:
         """
-        Analyze a query to determine if it should be resolved locally or escalated.
+        Return model-driven dispatch metadata without keyword scoring.
 
-        Args:
-            query: The user query string
-            manifest_str: Optional manifest override (uses stored manifest if None)
-
-        Returns:
-            Dict with:
-              - estimated_tool_count: Number of distinct tools estimated
-              - route_decision: 'local' or 'escalated'
-              - required_tools: List of tool names identified
-              - rationale: Reason for the decision
+        Kept for compatibility with older callers. The orchestrator now lets the
+        local model choose tools and compares actual MCP calls against the
+        UI-configured threshold after the local run.
         """
-        estimated = _estimate_distinct_tools(query, self.manifest)
-        required_tools = [
-            name for name, score in _count_tool_mentions(query, self.manifest).items()
-            if score > 0
-        ]
-
-        if estimated >= self.threshold:
-            decision = "escalated"
-            rationale = (
-                f"Estimated {estimated} tools needed, which meets or exceeds the "
-                f"threshold of {self.threshold}. Escalating to high-end cloud model."
-            )
-        else:
-            decision = "local"
-            rationale = (
-                f"Estimated {estimated} tools needed, which is below the threshold "
-                f"of {self.threshold}. Resolving locally."
-            )
-
         result = {
-            "estimated_tool_count": estimated,
-            "route_decision": decision,
-            "required_tools": required_tools,
-            "rationale": rationale,
+            "estimated_tool_count": 0,
+            "route_decision": "model_decided",
+            "selected_tools": [],
+            "rationale": (
+                "Dispatch is model-driven. Actual MCP tool calls are counted "
+                "after the local model runs and compared with the threshold."
+            ),
             "threshold": self.threshold,
         }
 
@@ -345,11 +287,26 @@ class MCPRouter:
             "result": result,
         })
 
-        logger.debug("Router decision: %s (estimated=%d, threshold=%d)", decision, estimated, self.threshold)
+        logger.debug("Router metadata emitted for model-driven dispatch (threshold=%d)", self.threshold)
         return result
 
+    def get_tool_schema(self, tool_name: str) -> dict[str, Any] | None:
+        """Return compact schema metadata for a tool by name."""
+        entry = next((e for e in self.manifest if e.name == tool_name), None)
+        return entry.handoff_schema() if entry else None
+
+    def default_tool_reason(self, tool_name: str, query: str) -> str:
+        """Fallback reason when the model did not provide one explicitly."""
+        entry = next((e for e in self.manifest if e.name == tool_name), None)
+        if not entry:
+            return f"The local model invoked `{tool_name}` while answering the query."
+        return (
+            f"The local model invoked `{tool_name}` because its role is: "
+            f"{entry.description}. Query: {query}"
+        )
+
     def create_manifest_for_escalation(
-        self, required_tools: list[str]
+        self, selected_tools: list[str]
     ) -> dict[str, Any]:
         """
         Create a sandbox/environment manifest for escalation.
@@ -358,7 +315,7 @@ class MCPRouter:
         when escalating. This contains only the tool schemas actually needed.
         """
         filtered_entries = [
-            e for e in self.manifest if e.name in required_tools
+            e for e in self.manifest if e.name in selected_tools
         ]
 
         manifest = {
@@ -369,6 +326,7 @@ class MCPRouter:
                     "type": e.tool_type,
                     "description": e.description,
                     "source": e.source_archetype,
+                    "schema": e.handoff_schema(),
                 }
                 for e in filtered_entries
             ],

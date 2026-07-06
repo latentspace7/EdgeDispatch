@@ -1,5 +1,5 @@
 """
-EdgeDispatch — FastAPI Application Entry Point
+EdgeDispatch  - FastAPI Application Entry Point
 
 Serves the EdgeDispatch hybrid LLM orchestration backend with:
   - SSE streaming chat endpoint

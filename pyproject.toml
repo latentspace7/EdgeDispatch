@@ -1,7 +1,7 @@
 [project]
 name = "edge-dispatch"
 version = "0.1.0"
-description = "Hybrid LLM Orchestration for Local-First AI Workflows — multi-agent system with conditional handoff between local (llama.cpp) and cloud (OpenAI) models"
+description = "Hybrid LLM Orchestration for Local-First AI Workflows  - multi-agent system with conditional handoff between local (llama.cpp) and cloud (OpenAI) models"
 authors = [{ name = "EdgeDispatch Team" }]
 requires-python = ">=3.11"
 dependencies = [

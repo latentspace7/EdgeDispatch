@@ -53,6 +53,7 @@ class ToolCallRecord:
     success: bool = True
     duration_ms: float = 0.0
     error: str | None = None
+    result: str | None = None
 
 
 @dataclass
@@ -205,6 +206,7 @@ class EdgeDispatchHooks(RunHooks[dict[str, Any]]):
             success=success,
             duration_ms=duration_ms,
             error=error,
+            result=str(result) if result is not None else None,
         )
         self.tool_call_records.append(record)
 
@@ -341,6 +343,7 @@ class ArizeEvaluator:
         self.project_name = project_name or ARIZE_PROJECT_NAME
         self._evaluation_records: list[dict[str, Any]] = []
         self._phoenix_launched = False
+        self._tracer_provider: Any | None = None
 
     def instrument_openai(self):
         """
@@ -355,7 +358,12 @@ class ArizeEvaluator:
             instrumentor = OpenAIInstrumentor()
             # Instrument only if not already instrumented
             if not getattr(instrumentor, "_is_instrumented", False):
-                instrumentor.instrument()
+                kwargs = (
+                    {"tracer_provider": self._tracer_provider}
+                    if self._tracer_provider is not None
+                    else {}
+                )
+                instrumentor.instrument(**kwargs)
                 logger.info("OpenAI client instrumented with OpenInference")
 
         except ImportError:
@@ -371,37 +379,76 @@ class ArizeEvaluator:
         Launch the Arize Phoenix UI server for trace inspection.
 
         Phoenix runs as a local web server (in a background thread) for
-        debugging and evaluation. In production, traces would be sent to the
-        Arize cloud platform. The endpoint is parsed into host/port.
+        debugging and evaluation, then registers an OTEL exporter pointed at
+        the Phoenix trace collector. In production, traces would be sent to
+        the Arize cloud platform. The endpoint is parsed into host/port.
         """
         if self._phoenix_launched:
             return
 
         try:
             import phoenix as px
+            from phoenix.otel import register
             from urllib.parse import urlparse
-
-            parsed = urlparse(self.endpoint)
-            host = parsed.hostname or "localhost"
-            port = parsed.port or 6006
-
-            session = px.launch_app(host=host, port=port, run_in_thread=True)
-            self._phoenix_launched = True
-            logger.info(
-                "Arize Phoenix launched at http://%s:%d (project: %s)",
-                host,
-                port,
-                self.project_name,
-            )
-            return session
         except ImportError:
             logger.warning(
                 "arize-phoenix not available. "
                 "Install with: pip install arize-phoenix"
             )
+            return None
+
+        parsed = urlparse(self.endpoint)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 6006
+        collector_endpoint = self._phoenix_trace_endpoint()
+
+        session = None
+        try:
+            session = px.launch_app(host=host, port=port, run_in_thread=True)
         except Exception as e:
-            logger.warning("Failed to launch Phoenix: %s", e)
+            logger.warning(
+                "Phoenix UI launch skipped or failed: %s. "
+                "Registering OTEL exporter to %s anyway.",
+                e,
+                collector_endpoint,
+            )
+
+        try:
+            self._tracer_provider = register(
+                endpoint=collector_endpoint,
+                project_name=self.project_name,
+                batch=True,
+                api_key=self.api_key or None,
+                protocol="http/protobuf",
+                verbose=False,
+            )
+            self._phoenix_launched = True
+            if session is None:
+                logger.info(
+                    "Phoenix OTEL tracing registered at %s (project: %s)",
+                    collector_endpoint,
+                    self.project_name,
+                )
+            else:
+                logger.info(
+                    "Arize Phoenix launched at http://%s:%d and OTEL tracing registered (project: %s)",
+                    host,
+                    port,
+                    self.project_name,
+                )
+            return session
+        except Exception as e:
+            logger.warning("Failed to register Phoenix OTEL exporter: %s", e)
         return None
+
+    def _phoenix_trace_endpoint(self) -> str:
+        """Return the OTLP/HTTP traces endpoint for the configured Phoenix base URL."""
+        from urllib.parse import urlparse, urlunparse
+
+        parsed = urlparse(self.endpoint)
+        if parsed.path.endswith("/v1/traces"):
+            return self.endpoint
+        return urlunparse(parsed._replace(path="/v1/traces", params="", query="", fragment=""))
 
     def log_evaluation(
         self,

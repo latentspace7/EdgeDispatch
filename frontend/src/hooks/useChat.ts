@@ -79,6 +79,7 @@ export function useChat(): UseChatReturn {
                     cost: meta.cost,
                     wasEscalated: meta.wasEscalated,
                     toolCount: meta.toolCount,
+                    handoff: meta.handoff,
                   }
                 : m,
             ),

@@ -1,1 +1,1 @@
-"""EdgeDispatch stub MCP server: document store (PDFs, DOCX, technical reports)."""
+"""EdgeDispatch stub MCP server: document store (HR leave statements)."""

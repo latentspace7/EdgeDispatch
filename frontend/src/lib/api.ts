@@ -1,4 +1,4 @@
-import type { Settings, StreamDone, CostBreakdown } from './types'
+import type { Settings, StreamDone, CostBreakdown, HandoffDetails } from './types'
 
 const API_BASE = '/api'
 
@@ -58,6 +58,20 @@ export interface ChatCallbacks {
 }
 
 function mapDone(parsed: Record<string, unknown>): StreamDone {
+  const rawHandoff = parsed.handoff as Record<string, unknown> | undefined
+  const handoff: HandoffDetails | undefined = rawHandoff
+    ? {
+        query: String(rawHandoff.query ?? ''),
+        selectedTools: Array.isArray(rawHandoff.selected_tools)
+          ? rawHandoff.selected_tools.map(String)
+          : [],
+        rationale: String(rawHandoff.rationale ?? ''),
+        evidence: Array.isArray(rawHandoff.evidence) ? rawHandoff.evidence : [],
+        toolThreshold: Number(rawHandoff.tool_threshold ?? parsed.threshold ?? 2),
+        prompt: String(rawHandoff.prompt ?? ''),
+      }
+    : undefined
+
   return {
     conversationId: String(parsed.conversation_id ?? ''),
     wasEscalated: Boolean(parsed.was_escalated ?? false),
@@ -65,6 +79,55 @@ function mapDone(parsed: Record<string, unknown>): StreamDone {
     threshold: Number(parsed.threshold ?? 2),
     cost: parsed.cost as CostBreakdown | undefined,
     evaluation: parsed.evaluation as Record<string, unknown> | undefined,
+    handoff,
+  }
+}
+
+function parseSseFieldValue(line: string, fieldName: string): string | null {
+  if (!line.startsWith(`${fieldName}:`)) return null
+  const value = line.slice(fieldName.length + 1)
+  return value.startsWith(' ') ? value.slice(1) : value
+}
+
+function dispatchSseEvent(eventBlock: string, callbacks: ChatCallbacks): void {
+  if (!eventBlock.trim()) return
+
+  const lines = eventBlock.split(/\r?\n/)
+  let eventType = ''
+  const dataLines: string[] = []
+
+  for (const line of lines) {
+    const eventValue = parseSseFieldValue(line, 'event')
+    if (eventValue !== null) {
+      eventType = eventValue.trim()
+      continue
+    }
+
+    const dataValue = parseSseFieldValue(line, 'data')
+    if (dataValue !== null) {
+      dataLines.push(dataValue)
+    }
+  }
+
+  const eventData = dataLines.join('\n')
+
+  try {
+    const parsed = JSON.parse(eventData)
+
+    if (eventType === 'token') {
+      callbacks.onToken(typeof parsed === 'string' ? parsed : parsed.text || eventData)
+    } else if (eventType === 'status') {
+      callbacks.onStatus(parsed.message || 'Processing...')
+    } else if (eventType === 'done') {
+      callbacks.onDone(mapDone(parsed))
+    } else if (eventType === 'error') {
+      callbacks.onError(parsed.message || 'Unknown error')
+    }
+  } catch {
+    // Token events are plain text; status/done/error events are JSON.
+    if (eventType === 'token' || !eventType) {
+      callbacks.onToken(eventData)
+    }
   }
 }
 
@@ -103,48 +166,22 @@ export function streamChat(
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          buffer += decoder.decode()
+          if (buffer.trim()) {
+            dispatchSseEvent(buffer, callbacks)
+          }
+          break
+        }
 
         buffer += decoder.decode(value, { stream: true })
 
-        // SSE events are separated by double newlines
-        const events = buffer.split('\n\n')
+        // SSE events can use LF or CRLF line endings depending on the server.
+        const events = buffer.split(/\r?\n\r?\n/)
         buffer = events.pop() || ''
 
         for (const eventBlock of events) {
-          if (!eventBlock.trim()) continue
-
-          const lines = eventBlock.split('\n')
-          let eventType = ''
-          let eventData = ''
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              eventType = line.slice(7).trim()
-            } else if (line.startsWith('data: ')) {
-              eventData = line.slice(6)
-            }
-          }
-
-          try {
-            const parsed = JSON.parse(eventData)
-
-            if (eventType === 'token') {
-              // Token events can be either {data: "text"} or plain string
-              callbacks.onToken(typeof parsed === 'string' ? parsed : parsed.text || eventData)
-            } else if (eventType === 'status') {
-              callbacks.onStatus(parsed.message || 'Processing...')
-            } else if (eventType === 'done') {
-              callbacks.onDone(mapDone(parsed))
-            } else if (eventType === 'error') {
-              callbacks.onError(parsed.message || 'Unknown error')
-            }
-          } catch {
-            // Not JSON: plain text token
-            if (eventType === 'token' || !eventType) {
-              callbacks.onToken(eventData)
-            }
-          }
+          dispatchSseEvent(eventBlock, callbacks)
         }
       }
     })

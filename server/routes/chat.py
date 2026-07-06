@@ -6,7 +6,6 @@ Endpoints for chat streaming (SSE) and conversation management.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
@@ -94,61 +93,54 @@ async def chat(body: ChatRequest):
                 "event": "status",
                 "data": json.dumps({
                     "type": "analyzing",
-                    "message": "Analyzing query tool requirements...",
+                    "message": "Running local model dispatch...",
                     "conversation_id": conv_id,
                     "message_id": user_msg.id,
                 }),
             }
-
-            await asyncio.sleep(0.1)
 
             # Process through orchestrator if available
             if _orchestrator is not None:
                 # Update orchestrator threshold
                 _orchestrator.set_threshold(threshold)
 
-                # Pre-analyze for tool count
-                tool_analysis = _orchestrator.router.analyze_query(
-                    query, _orchestrator.tool_manifest
-                )
-                estimated_tools = tool_analysis["estimated_tool_count"]
-                route = tool_analysis["route_decision"]
-
                 yield {
                     "event": "status",
                     "data": json.dumps({
                         "type": "routing",
                         "message": (
-                            f"Estimated {estimated_tools} tool(s) needed. "
-                            f"Threshold: {threshold}. "
-                            f"Routing: {'cloud' if route == 'escalated' else 'local'}."
+                            "Local model is choosing tools. "
+                            f"Escalation threshold: {threshold} actual MCP call(s)."
                         ),
-                        "estimated_tools": estimated_tools,
-                        "route_decision": route,
                         "threshold": threshold,
                     }),
                 }
 
-                await asyncio.sleep(0.1)
+                result = None
+                async for stream_event in _orchestrator.process_query_stream(query):
+                    event_type = stream_event.get("event")
 
-                # Process query
-                result = await _orchestrator.process_query(query)
-                response_text = result.final_answer
+                    if event_type == "status":
+                        yield {
+                            "event": "status",
+                            "data": json.dumps(stream_event.get("data", {})),
+                        }
+                        continue
 
-                # Stream the response in chunks (simulate token-by-token)
-                words = response_text.split()
-                chunk_size = max(1, len(words) // 20)  # ~20 chunks total
+                    if event_type == "token":
+                        chunk = str(stream_event.get("data", ""))
+                        assistant_content += chunk
+                        yield {
+                            "event": "token",
+                            "data": chunk,
+                        }
+                        continue
 
-                for i in range(0, len(words), chunk_size):
-                    chunk = " ".join(words[i : i + chunk_size])
-                    if i > 0:
-                        chunk = " " + chunk
-                    assistant_content += chunk
-                    yield {
-                        "event": "token",
-                        "data": chunk,
-                    }
-                    await asyncio.sleep(0.03)
+                    if event_type == "result":
+                        result = stream_event.get("result")
+
+                if result is None:
+                    raise RuntimeError("Orchestrator completed without a result")
 
                 # Emit done with metadata + cost breakdown
                 done_payload: dict[str, Any] = {
@@ -157,6 +149,15 @@ async def chat(body: ChatRequest):
                     "tool_count": result.tool_count,
                     "threshold": result.tool_threshold,
                 }
+                if result.handoff_document is not None:
+                    done_payload["handoff"] = {
+                        "query": result.handoff_document.query,
+                        "selected_tools": result.handoff_document.selected_tools,
+                        "rationale": result.handoff_document.rationale,
+                        "evidence": result.handoff_document.evidence,
+                        "tool_threshold": result.handoff_document.tool_threshold,
+                        "prompt": result.handoff_document.to_compact_prompt(),
+                    }
                 if result.cost is not None:
                     done_payload["cost"] = result.cost.as_dict()
                 if result.evaluation:

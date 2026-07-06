@@ -78,12 +78,12 @@ brew install llama.cpp
 pip install huggingface_hub
 
 # Download a small function-calling model (~1 GB)
-huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct-GGUF qwen2.5-1.5b-instruct-q4_k_m.gguf \
+huggingface-cli downQwen/Qwen3.5-4B Qwen3.5-4B-Q4_K_M.gguf \
   --local-dir ./models
 
 # Start the server (keep this terminal open)
 llama-server \
-  -m ./models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  -m ./models/Qwen3.5-4B-Q4_K_M.gguf \
   --host 0.0.0.0 --port 8080 \
   --ctx-size 8192 --n-gpu-layers 99
 ```
@@ -98,13 +98,13 @@ Point the backend at it (add to your shell profile if you want this to persist):
 
 ```bash
 export EDGE_LOCAL_BASE_URL="http://localhost:8080/v1"
-export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
+export EDGE_LOCAL_MODEL_NAME="Qwen3.5-4B-Q4_K_M"
 ```
 
-> **Skipping this step:** the backend will still start and the routing
-> heuristic + cost model + evaluation will work, but any query the dispatcher
-> routes to the local agent will fail when it tries to call the SLM. See
-> [Troubleshooting](#troubleshooting) for the fallback.
+> **Skipping this step:** the backend will still start and settings/cost helpers
+> will work, but chat dispatch requires the local SLM because the model chooses
+> which MCP tools to call. See [Troubleshooting](#troubleshooting) for the
+> fallback.
 
 ### Step 5 - Start the backend (Terminal 2)
 
@@ -163,9 +163,8 @@ In the browser, type the thesis example query:
 
 Expected behaviour:
 
-- A status line reads "Estimated 2 tool(s) needed. Routing: cloud." (the
-  heuristic routes this as `D=1` because it matches two tools, `db_lookup` and
-  `wiki_search`).
+- A status line says the local model is choosing tools and shows the current
+  escalation threshold.
 - The assistant answer appears, streamed token-by-token.
 - A cost badge under the answer shows `☁ Cloud synthesis`, `C_ED`, the
   monolithic `C_mono`, and `saved ΔC`.
@@ -206,10 +205,10 @@ calls the dispatcher tolerates before escalating.
 │  /api/evaluations   /api/health                   │
 └─────────────────────┬────────────────────────────┘
                       │
-            MCPRouter.analyze_query(Q, M)
-            ── authoritative dispatch (Eq 2.1) ──
+            Local SLM chooses MCP tools from M
+            ── model-driven dispatch (Eq 2.1) ──
             │                     │
-       N < threshold         N >= threshold
+ actual calls < threshold  actual calls >= threshold
        D = 0 (local)         D = 1 (escalate)
             │                     │
             ▼                     ▼
@@ -249,28 +248,19 @@ overhead is absorbed at the local tier at zero cloud cost.
 ## How Dispatch Works
 
 The dispatch decision (thesis Eq 2.1: `(D, Ŝ(Q)) = Evaluate(Q, M)`) is made by
-a Python heuristic in `MCPRouter.analyze_query()`, which estimates the number of
-distinct tools a query needs from the compact tool manifest and compares it
-against the threshold.
+the local SLM. The backend gives the local agent the compact MCP manifest and
+the UI-configured tool threshold; the agent chooses which MCP tools to invoke.
+The backend then counts actual MCP calls and escalates when the model calls
+`escalate_query` or when the actual call count reaches the threshold.
 
-> **Note on thesis alignment:** the thesis makes the *SLM* authoritative for
-> dispatch. This prototype makes the *heuristic* authoritative for determinism
-> and to decouple dispatch correctness from SLM compliance. It is implemented
-> with **two local-agent variants**:
-> - **resolve variant** (D=0): has MCP tools but *no* escalation tool - it must
->   answer directly and cannot override the route.
-> - **escalate variant** (D=1): has MCP tools *and* `escalate_query` - it gathers
->   evidence, then packages a handoff for the cloud synthesiser.
->
-> The heuristic picks which variant runs. A fallback covers the case where the
-> escalate-variant SLM fails to call `escalate_query`: a minimal handoff is
-> built from its raw output and a non-compliance warning is logged. Empirical
-> comparison of heuristic-authoritative vs SLM-authoritative is deferred to
-> Thesis B.
+Each handoff evidence item records the invoked tool, why it was called, the
+tool schema, and the returned result. If the threshold is reached but the local
+model answers directly, the backend builds a fallback handoff from captured
+tool-call records plus the local model output.
 
 ```
-If N >= tool_threshold  →  D=1 (escalate)  →  escalate agent → cloud synthesis
-If N <  tool_threshold  →  D=0 (local)     →  resolve agent → answer at edge
+If actual MCP calls >= tool_threshold → D=1 (escalate) → cloud synthesis
+If actual MCP calls <  tool_threshold → D=0 (local)    → answer at edge
 ```
 
 ---
@@ -403,7 +393,7 @@ brew install llama.cpp
 pip install huggingface_hub
 
 # Download a small function-calling model (~1 GB)
-huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct-GGUF qwen2.5-1.5b-instruct-q4_k_m.gguf \
+huggingface-cli download Qwen/Qwen3.5-4B Qwen3.5-4B-Q4_K_M.gguf \
   --local-dir ./models
 ```
 
@@ -411,7 +401,7 @@ huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct-GGUF qwen2.5-1.5b-instruct-q
 
 ```bash
 llama-server \
-  -m ./models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  -m ./models/Qwen3.5-4B-Q4_K_M.gguf \
   --host 0.0.0.0 --port 8080 \
   --ctx-size 8192 --n-gpu-layers 99
 ```
@@ -430,7 +420,7 @@ Verify: `curl http://localhost:8080/v1/models`.
 
 ```bash
 export EDGE_LOCAL_BASE_URL="http://localhost:8080/v1"
-export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
+export EDGE_LOCAL_MODEL_NAME="Qwen3.5-4B-Q4_K_M"
 ```
 
 > The thesis expects a **GRPO-fine-tuned** Qwen3.5-2B (LoRA r=64, xLAM-60k).
@@ -496,9 +486,9 @@ evaluator.evaluate_tool_selection(
 # → {f1, precision, recall, invalid_tool_rate, ...}
 ```
 
-Proof-of-concept target: **Tool F1 > 0.80**. In the prototype, ground truth is
-proxied by the heuristic's `required_tools`; a labelled enterprise set is
-reserved for Thesis B.
+Proof-of-concept target: **Tool F1 > 0.80**. In the prototype, tool-selection
+records are derived from actual MCP calls captured by the runtime hooks; a
+labelled enterprise set is reserved for Thesis B.
 
 ### Answer Correctness (6-point rubric, RQ3)
 
@@ -512,23 +502,22 @@ reserved for Thesis B.
 The prototype uses heuristic string matching; full evaluation (judge LLM or
 human reviewers) is Thesis B.
 
-### Try it without models
+### Try the manifest without models
 
-The routing heuristic and cost model work without any LLM running:
+Manifest/schema construction and the cost model work without any LLM running.
+Dispatch itself requires the local model because tool choice is model-driven:
 
 ```bash
 uv run python -c "
-from server.mcp_router import MCPRouter, ToolManifestEntry
+from types import SimpleNamespace
+from server.mcp_router import MCPRouter
 router = MCPRouter(threshold=2)
-router.manifest = [
-    ToolManifestEntry(name='db_lookup', tool_type='query', description='DB lookup',
-        question_affinities=['status', 'approval'], source_archetype='relational_db'),
-    ToolManifestEntry(name='wiki_search', tool_type='search', description='Wiki search',
-        question_affinities=['policy', 'compliance'], source_archetype='policy_wiki'),
-]
-r = router.analyze_query('What is the status of REQ-2024-1052, and what does the policy say?')
-print(f'Route: {r[\"route_decision\"]} (N={r[\"estimated_tool_count\"]}, threshold={r[\"threshold\"]})')
-print(f'Required tools: {r[\"required_tools\"]}')
+router.build_manifest_from_servers([
+    SimpleNamespace(name='document_store'),
+    SimpleNamespace(name='relational_db'),
+    SimpleNamespace(name='policy_wiki'),
+])
+print(router.get_tool_schema('db_lookup'))
 "
 ```
 
@@ -614,7 +603,7 @@ All settings live in `server/config.py` and are env-var overridable.
 
 ```bash
 export EDGE_LOCAL_BASE_URL="http://localhost:8080/v1"
-export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
+export EDGE_LOCAL_MODEL_NAME="Qwen3.5-4B-Q4_K_M"
 export OPENAI_API_KEY="sk-your-key-here"
 export EDGE_TOOL_THRESHOLD="2"
 export EDGE_PRICE_INPUT_PER_MTOK="5.0"
@@ -664,7 +653,7 @@ asyncio.run(main())
 | Class | Module | Purpose |
 |-------|--------|---------|
 | `EdgeDispatchOrchestrator` | `agent_definition.py` | Main pipeline coordinator |
-| `MCPRouter` | `mcp_router.py` | Authoritative dispatch heuristic + handoff docs |
+| `MCPRouter` | `mcp_router.py` | Compact tool manifest, tool schemas, and handoff docs |
 | `CostModel` / `CostBreakdown` | `cost.py` | Thesis Eq 2.4–2.6 cost computation |
 | `EdgeDispatchHooks` | `observability.py` | RunHooks for tracing + token usage |
 | `ArizeEvaluator` | `observability.py` | Tool F1, answer rubric, Phoenix integration |
@@ -689,8 +678,8 @@ edge-dispatch/
 │   ├── main.py                    ← FastAPI app + MCP server lifecycle
 │   ├── config.py                  ← Env-based configuration
 │   ├── cost.py                    ← Thesis cost model (Eq 2.4–2.6)
-│   ├── mcp_router.py              ← Dispatch heuristic + handoff documents
-│   ├── agent_definition.py        ← Two local-agent variants + cloud agent + orchestrator
+│   ├── mcp_router.py              ← Tool manifest/schemas + handoff documents
+│   ├── agent_definition.py        ← Model-driven local agent + cloud agent + orchestrator
 │   ├── observability.py           ← Phoenix hooks + Arize evaluator
 │   ├── models/schemas.py          ← Pydantic request/response models
 │   └── routes/
@@ -774,9 +763,8 @@ TypeScript 5.7+.
 
 ## Known Limitations & Thesis B
 
-- **Dispatch authority:** the prototype makes the Python heuristic
-  authoritative, diverging from the thesis's SLM-authoritative design (Eq 2.1).
-  Empirical comparison is deferred to Thesis B.
+- **Dispatch authority:** dispatch is SLM-authoritative. The UI threshold is the
+  manual control; the backend enforces it against actual MCP tool calls.
 - **No trained SLM in this repo:** the backend assumes a fine-tuned model is
   served by llama.cpp. Training code (SFT + GRPO on xLAM-60k) is out of scope
   for this backend deliverable. The off-the-shelf Qwen2.5-1.5B-Instruct works
@@ -784,7 +772,7 @@ TypeScript 5.7+.
   GRPO-aligned model.
 - **Rubric heuristics:** answer correctness uses string-matching heuristics; the
   thesis prescribes a judge LLM or human reviewers for full evaluation.
-- **Tool-F1 ground truth:** proxied by the heuristic's `required_tools` until a
-  labelled enterprise query set exists.
+- **Tool-F1 ground truth:** currently compared against actual runtime MCP calls
+  until a labelled enterprise query set exists.
 - **In-memory state:** conversations and evaluation records are in-memory and
   reset on backend restart (frontend conversations persist via localStorage).

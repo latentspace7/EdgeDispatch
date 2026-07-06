@@ -78,19 +78,19 @@ MCP_SERVER_CONFIGS = [
         "name": "document_store",
         "command": "python",
         "args": ["-m", "mcp_server_docs"],
-        "description": "Document store: PDFs, DOCX, technical reports",
+        "description": "Document store: employee leave balances and HR documents",
     },
     {
         "name": "relational_db",
         "command": "python",
         "args": ["-m", "mcp_server_db"],
-        "description": "Relational database: approval records and metadata",
+        "description": "Relational database: employee records and HR metadata",
     },
     {
         "name": "policy_wiki",
         "command": "python",
         "args": ["-m", "mcp_server_wiki"],
-        "description": "Policy wiki: compliance and procedure pages",
+        "description": "Policy wiki: HR policies and leave eligibility rules",
     },
 ]
 

@@ -34,9 +34,9 @@ export default function ChatInput({ onSend, onCancel, isStreaming, disabled }: P
   }
 
   return (
-    <div className="border-t border-cyber-border p-4">
+    <div className="border-t border-[#d4d1c8] bg-[#eceae3]/95 p-4">
       <div className="max-w-3xl mx-auto">
-        <div className="relative flex items-end gap-2 bg-cyber-card border border-cyber-border rounded-2xl p-2 transition-all duration-300 focus-within:border-edge-cyan/40 focus-within:shadow-neon-cyan">
+        <div className="relative flex items-end gap-2 bg-white border border-[#cbc7bd] rounded-xl p-2 transition-all duration-300 focus-within:border-[#e2231a]/70 focus-within:shadow-neon-cyan">
           <textarea
             ref={textareaRef}
             value={input}
@@ -45,7 +45,7 @@ export default function ChatInput({ onSend, onCancel, isStreaming, disabled }: P
             placeholder="Ask anything..."
             rows={1}
             disabled={disabled}
-            className="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-500 resize-none outline-none px-3 py-2 max-h-40 disabled:opacity-50"
+            className="flex-1 bg-transparent text-sm text-[#242424] placeholder-[#77736a] resize-none outline-none px-3 py-2 max-h-40 disabled:opacity-50"
           />
 
           <button
@@ -56,7 +56,7 @@ export default function ChatInput({ onSend, onCancel, isStreaming, disabled }: P
               transition-all duration-300
               ${isStreaming
                 ? 'bg-edge-rose/20 text-edge-rose border border-edge-rose/30 hover:bg-edge-rose/30'
-                : 'bg-edge-cyan/10 text-edge-cyan border border-edge-cyan/20 hover:bg-edge-cyan/20 hover:shadow-neon-cyan disabled:opacity-30 disabled:hover:shadow-none'
+                : 'bg-[#e2231a] text-white border border-[#b41414] hover:bg-[#b41414] hover:shadow-neon-cyan disabled:opacity-30 disabled:hover:shadow-none'
               }
             `}
           >
@@ -68,8 +68,8 @@ export default function ChatInput({ onSend, onCancel, isStreaming, disabled }: P
           </button>
         </div>
 
-        <p className="text-[10px] text-slate-600 text-center mt-2">
-          EdgeDispatch — hybrid local + cloud inference
+        <p className="text-[10px] text-[#6d6a62] text-center mt-2">
+          EdgeDispatch - hybrid local + cloud inference
         </p>
       </div>
     </div>
