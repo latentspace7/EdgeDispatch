@@ -12,11 +12,10 @@ Based on the thesis Section 4.6 evaluation framework requirements.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from agents import (
     RunHooks,
@@ -38,6 +37,9 @@ from server.config import (
 
 logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+if TYPE_CHECKING:
+    from server.cost import TokenUsage
 
 
 # ──────────────────────────────────────────────
@@ -65,17 +67,6 @@ class AgentTurnRecord:
     input_tokens: int = 0
     output_tokens: int = 0
     tool_calls_made: int = 0
-
-
-@dataclass
-class RouteDecisionRecord:
-    """Record of the routing decision for a query."""
-    query: str
-    decision: str  # "local" or "escalated"
-    estimated_tool_count: int
-    actual_tool_count: int
-    threshold: int
-    timestamp: float = field(default_factory=time.time)
 
 
 # ──────────────────────────────────────────────

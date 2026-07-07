@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 
@@ -42,17 +40,6 @@ class Conversation(BaseModel):
 
 
 # ──────────────────────────────────────────────
-# Streaming Event Models
-# ──────────────────────────────────────────────
-
-class StreamEvent(BaseModel):
-    """An SSE event emitted during chat processing."""
-    type: str  # "token", "status", "error", "done", "metadata"
-    data: str
-    metadata: dict[str, Any] | None = None
-
-
-# ──────────────────────────────────────────────
 # Settings Models
 # ──────────────────────────────────────────────
 
@@ -72,13 +59,3 @@ class SettingsResponse(BaseModel):
     high_end_model: str
     mcp_server_count: int
     arize_endpoint: str
-
-
-# ──────────────────────────────────────────────
-# Health Model
-# ──────────────────────────────────────────────
-
-class HealthResponse(BaseModel):
-    """Health check response."""
-    status: str = "ok"
-    version: str = "0.1.0"

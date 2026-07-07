@@ -1,4 +1,3 @@
-import { useMemo } from 'react'
 import { Remarkable } from 'remarkable'
 
 interface Props {
@@ -21,7 +20,7 @@ function renderMarkdown(content: string): string {
 }
 
 export default function MarkdownMessage({ content, isUser }: Props) {
-  const html = useMemo(() => renderMarkdown(content), [content])
+  const html = renderMarkdown(content)
 
   return (
     <div

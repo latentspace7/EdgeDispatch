@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from server.config import DEFAULT_TOOL_THRESHOLD
 
@@ -89,12 +89,6 @@ class HandoffDocument:
         ]
         return "\n".join(lines)
 
-    def estimate_tokens(self) -> int:
-        """Rough token estimate for the handoff document (characters / 4)."""
-        content = self.to_compact_prompt()
-        return len(content) // 4
-
-
 # ──────────────────────────────────────────────
 # MCP Router
 # ──────────────────────────────────────────────
@@ -115,7 +109,6 @@ class MCPRouter:
     def __init__(self, threshold: int = DEFAULT_TOOL_THRESHOLD):
         self.threshold = threshold
         self.manifest: list[ToolManifestEntry] = []
-        self._decision_history: list[dict[str, Any]] = []
 
     def build_manifest_from_servers(self, mcp_servers: list[Any]) -> str:
         """
@@ -263,33 +256,6 @@ class MCPRouter:
             return "policy_wiki"
         return "document_store"  # default
 
-    def analyze_query(self, query: str, manifest_str: str | None = None) -> dict[str, Any]:
-        """
-        Return model-driven dispatch metadata without keyword scoring.
-
-        Kept for compatibility with older callers. The orchestrator now lets the
-        local model choose tools and compares actual MCP calls against the
-        UI-configured threshold after the local run.
-        """
-        result = {
-            "estimated_tool_count": 0,
-            "route_decision": "model_decided",
-            "selected_tools": [],
-            "rationale": (
-                "Dispatch is model-driven. Actual MCP tool calls are counted "
-                "after the local model runs and compared with the threshold."
-            ),
-            "threshold": self.threshold,
-        }
-
-        self._decision_history.append({
-            "query": query[:200],
-            "result": result,
-        })
-
-        logger.debug("Router metadata emitted for model-driven dispatch (threshold=%d)", self.threshold)
-        return result
-
     def get_tool_schema(self, tool_name: str) -> dict[str, Any] | None:
         """Return compact schema metadata for a tool by name."""
         entry = next((e for e in self.manifest if e.name == tool_name), None)
@@ -337,47 +303,3 @@ class MCPRouter:
 
         logger.info("Created escalation manifest: %d tools in scope", len(filtered_entries))
         return manifest
-
-    def create_handoff_document(
-        self,
-        query: str,
-        selected_tools: list[str],
-        evidence: list[dict[str, Any]],
-        rationale: str = "",
-    ) -> HandoffDocument:
-        """
-        Generate a structured handoff document H = {Q, Ŝ(Q), E}.
-
-        Per Section 4.5 Algorithm 1, this is the document compiled by the local
-        SLM and transmitted to the cloud model when D=1.
-        """
-        if not rationale:
-            rationale = (
-                f"Query required {len(selected_tools)} tools, "
-                f"exceeding the threshold of {self.threshold}. "
-                f"Evidence collected from: {', '.join(selected_tools)}."
-            )
-
-        doc = HandoffDocument(
-            query=query,
-            selected_tools=selected_tools,
-            rationale=rationale,
-            evidence=evidence,
-            tool_threshold=self.threshold,
-        )
-
-        estimated_tokens = doc.estimate_tokens()
-        logger.info(
-            "Handoff document created: %d tools, ~%d tokens",
-            len(selected_tools),
-            estimated_tokens,
-        )
-        return doc
-
-    def get_decision_history(self) -> list[dict[str, Any]]:
-        """Return the history of routing decisions for observability."""
-        return self._decision_history
-
-    def reset_history(self):
-        """Clear the decision history."""
-        self._decision_history.clear()

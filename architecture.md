@@ -1,4 +1,4 @@
-# EdgeDispatch  - Architecture Reference
+# EdgeDispatch - Architecture Reference
 
 > A practical onboarding and reference guide for the EdgeDispatch prototype,
 > a two-tier, MCP-aware hybrid LLM orchestration system. For the full operator
@@ -15,15 +15,11 @@
 4. [Frontend architecture](#4-frontend-architecture)
 5. [Backend architecture](#5-backend-architecture)
 6. [End-to-end application flow](#6-end-to-end-application-flow)
-7. [Authentication and security](#7-authentication-and-security)
-8. [Configuration and environment](#8-configuration-and-environment)
-9. [AI and data flow](#9-ai-and-data-flow)
-10. [External integrations](#10-external-integrations)
-11. [Development workflow](#11-development-workflow)
-12. [Testing and quality](#12-testing-and-quality)
-13. [Deployment and runtime](#13-deployment-and-runtime)
-14. [Key design decisions](#14-key-design-decisions)
-15. [Troubleshooting and operational notes](#15-troubleshooting-and-operational-notes)
+7. [Configuration and environment](#7-configuration-and-environment)
+8. [AI and data flow](#8-ai-and-data-flow)
+9. [External integrations](#9-external-integrations)
+10. [Development workflow](#10-development-workflow)
+11. [Key design decisions](#11-key-design-decisions)
 
 ---
 
@@ -111,7 +107,7 @@ the answer token-by-token and shows a cost badge beneath it.
 | Component | Location | Role |
 |-----------|----------|------|
 | Manifest/schema helper | `server/mcp_router.py` | Builds compact tool manifests, schemas, and handoff documents. |
-| Local dispatch agent | `server/agent_definition.py` `create_local_escalate_agent` | Model-driven path: MCP tools + `escalate_query` function tool. |
+| Local dispatch agent | `server/agent_definition.py` `create_local_dispatch_agent` | Model-driven path: MCP tools + `escalate_query` function tool. |
 | Cloud synthesis agent | `server/agent_definition.py` `create_high_end_agent` | No tools; receives only the handoff prompt. |
 | `escalate_query` tool | `agent_definition.py` `make_escalation_function` | Packages `H = {Q, Ŝ(Q), rationale, E}` into the run context. |
 | Cost model | `server/cost.py` | Thesis Eq 2.4–2.6 with input+output pricing extension. |
@@ -128,7 +124,7 @@ thesis_code/
 ├── uv.lock                     # Locked dependency versions (committed)
 ├── README.md                   # Operator runbook (setup, commands, troubleshooting)
 ├── architecture.md             # This file
-├── .gitignore                  # Root ignores (see §8)
+├── .gitignore                  # Root ignores (see §7)
 │
 ├── server/                     # FastAPI backend (Python 3.11+)
 │   ├── __init__.py
@@ -190,6 +186,11 @@ thesis_code/
 A single-page React 19 application with **no router**: there is exactly one
 view (the chat). State is split between `useLocalStorage` (persisted across
 reload) and `useState` (ephemeral UI state).
+
+React Compiler is enabled in `vite.config.ts`, so components should use plain
+functions and direct calculations by default. Avoid manual `useCallback`,
+`useMemo`, or `React.memo` unless the code needs their semantics beyond render
+memoization.
 
 ### Key files and responsibilities
 
@@ -390,7 +391,7 @@ Only one is **required** for full functionality:
 | **Build (frontend)** | `npm run build` → `tsc -b && vite build` → `frontend/dist/`. |
 | **Build (backend)** | No build step; `uv run` executes from source. `pyproject.toml` declares `hatchling` as the build backend for wheel packaging. |
 | **Runtime** | `uv run uvicorn server.main:app --reload --host 0.0.0.0 --port 8000` from the repo root (so `python -m mcp_server_*` resolves). |
-| **Deployment** | None defined. No Dockerfile, no CI, no IaC. See [§13](#13-deployment-and-runtime). |
+| **Deployment** | None defined. No Dockerfile, no CI, no IaC. |
 
 ---
 
@@ -417,12 +418,10 @@ schema inclusion are dynamic.
 
 Instruction templates in `agent_definition.py`:
 
-- **`LOCAL_AGENT_ESCALATE_INSTRUCTIONS`** is the active model-driven local agent
+- **`LOCAL_AGENT_ESCALATE_INSTRUCTIONS`** is the model-driven local-agent
   prompt. It gives the SLM the compact manifest, tells it to record reasons and
   schemas for invoked tools, and instructs it to call `escalate_query` when the
   actual MCP tool-call threshold is reached.
-- **`LOCAL_AGENT_RESOLVE_INSTRUCTIONS`** is retained for compatibility with
-  older callers but is not the active routing path.
 - **`HIGH_END_AGENT_INSTRUCTIONS`** tells the cloud model it is a pure
   synthesiser, must use only the provided evidence, must not fabricate, and has
   no MCP tools.
@@ -445,7 +444,7 @@ agent-construction time.
 User query Q
     │
     ▼
-Runner.run(local_dispatch_agent, input=Q, context=run_context)
+Runner.run_streamed(local_dispatch_agent, input=Q, context=run_context)
     │
     ├── model-selected MCP calls
     ├── optional escalate_query call
@@ -460,7 +459,7 @@ Orchestrator compares actual_mcp_calls with threshold
             H = {Q, Ŝ(Q), rationale, E}
     │
     ▼ [D=1 only]
-Runner.run(high_end_agent, input=H.to_prompt())
+Runner.run_streamed(high_end_agent, input=H.to_prompt())
     │
     └── final_answer A
     │
@@ -512,13 +511,13 @@ saving versus sending every schema to the cloud.
 | **OpenAI API** (`openai` SDK) | `agent_definition.py` cloud agent; instrumented by `observability.py` | The cloud frontier model for synthesis (D=1). |
 | **`llama.cpp` server** | `agent_definition.py` local agents via `OpenAIProvider` | Serves the local SLM with an OpenAI-compatible API on `:8080`. User-installed and user-started. |
 | **`openai-agents` SDK** | `agent_definition.py`, `observability.py` | Agent abstraction, `Runner.run_streamed` loop, `RunHooks`, `function_tool`, `MCPServer` plumbing. |
-| **MCP (Model Context Protocol)** | `server/main.py`, `mcp_server_*` | Tool exposure to the local agents. Three stub servers over stdio. |
+| **MCP (Model Context Protocol)** | `server/main.py`, `mcp_server_*` | Tool exposure to the local dispatch agent. Three stub servers over stdio. |
 | **`mcp.server.fastmcp.FastMCP`** | `mcp_server_*/*/__main__.py` | The library that turns a Python module into an MCP server speaking JSON-RPC over stdio. |
 | **Arize Phoenix** | `server/observability.py` | Local trace store + UI. Auto-launched in a background thread. Stores data in a self-contained SQLite DB at `~/.phoenix/`. |
 | **OpenInference** (`openinference-instrumentation-openai`) | `observability.py` `instrument_openai` | Wraps the OpenAI client so every cloud call becomes a Phoenix span. |
 | **Hugging Face CLI** | README only (model download) | Fetches the GGUF model weights for `llama.cpp`. Not invoked by the app. |
 | **FastAPI + `sse-starlette`** | `server/main.py`, `server/routes/chat.py` | HTTP server and SSE streaming. |
-| **Vite + React + Tailwind** | `frontend/` | Frontend dev server, build, and styling. |
+| **Vite + React + Tailwind** | `frontend/` | Frontend dev server, build, and styling. React Compiler is wired through `@vitejs/plugin-react` + `@rolldown/plugin-babel`. |
 
 No databases, queues, caches, cloud storage, or third-party SaaS (beyond
 OpenAI) are integrated. Phoenix's SQLite is the only persistent store and it
@@ -531,14 +530,11 @@ lives outside the repo.
 ### First-time setup
 
 ```bash
-# 1. Python deps (from repo root)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 
-# 2. Frontend deps
 cd frontend && npm install && cd ..
 
-# 3. Secrets + model config
 export OPENAI_API_KEY="sk-..."
 export EDGE_LOCAL_BASE_URL="http://localhost:8080/v1"
 export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
@@ -589,7 +585,7 @@ export EDGE_LOCAL_MODEL_NAME="qwen2.5-1.5b-instruct-q4_k_m"
 
 ## 11. Key design decisions
 
-### 1. Model-driven dispatch with threshold enforcement
+### 11.1 Model-driven dispatch with threshold enforcement
 
 The thesis makes the **SLM** authoritative for the dispatch decision. This
 prototype now follows that direction: the local model chooses MCP tools from
@@ -600,7 +596,7 @@ calls from runtime hooks and escalates when the count reaches the threshold,
 even if the SLM answered directly. In that fallback path, the orchestrator
 builds a handoff from captured tool records and the local output.
 
-### 2. Input + output pricing (extends the thesis)
+### 11.2 Input + output pricing (extends the thesis)
 
 The thesis cost model prices input tokens only. Real APIs bill input and
 output separately, so `CostModel` extends Eq 2.4–2.6 with a per-million output
@@ -609,13 +605,13 @@ per-query cost badge would understate real spend. The `C_mono` output estimate
 is proxied from observed output (cloud when escalated, local when not), which
 is an approximation.
 
-### 3. Single local dispatch agent with `escalate_query`
+### 11.3 Single local dispatch agent with `escalate_query`
 
 The active path uses one local dispatch agent with MCP tools and
 `escalate_query` available. This keeps semantic tool choice in the local model
 while preserving a deterministic threshold override in the backend.
 
-### 4. Stub MCP servers
+### 11.4 Stub MCP servers
 
 Three in-memory stubs (`mcp_server_{docs,db,wiki}`) stand in for real
 enterprise sources. They ship representative HR leave data (for example
@@ -625,7 +621,7 @@ prototype self-contained and reproducible. The trade-off is trivial tool
 behaviour over a few hard-coded records. Real MCP servers can be wired in via
 `MCP_SERVER_CONFIGS`.
 
-### 5. Phoenix auto-launch
+### 11.5 Phoenix auto-launch
 
 The orchestrator launches Phoenix in a background thread on construction
 (`observability.py:369`). First run takes ~8 s for Alembic migrations to build
@@ -635,7 +631,7 @@ downside is startup latency and a port binding. Disable by removing the
 `launch_phoenix()` call in `EdgeDispatchOrchestrator.__init__`, or point at an
 existing Phoenix via `ARIZE_PHOENIX_ENDPOINT`.
 
-### 6. In-memory state
+### 11.6 In-memory state
 
 Conversations, settings, and evaluation records are Python dicts. No database.
 This minimises moving parts for a thesis prototype, but means no persistence

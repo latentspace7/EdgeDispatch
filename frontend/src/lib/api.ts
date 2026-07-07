@@ -1,6 +1,8 @@
 import type { Settings, StreamDone, CostBreakdown, HandoffDetails } from './types'
 
 const API_BASE = '/api'
+const SSE_LINE_SEPARATOR = '\r\n'
+const SSE_EVENT_DELIMITER = `${SSE_LINE_SEPARATOR}${SSE_LINE_SEPARATOR}`
 
 // Backend SettingsResponse uses snake_case; the frontend Settings type uses
 // camelCase. This maps one to the other.
@@ -92,7 +94,7 @@ function parseSseFieldValue(line: string, fieldName: string): string | null {
 function dispatchSseEvent(eventBlock: string, callbacks: ChatCallbacks): void {
   if (!eventBlock.trim()) return
 
-  const lines = eventBlock.split(/\r?\n/)
+  const lines = eventBlock.split(SSE_LINE_SEPARATOR)
   let eventType = ''
   const dataLines: string[] = []
 
@@ -176,8 +178,8 @@ export function streamChat(
 
         buffer += decoder.decode(value, { stream: true })
 
-        // SSE events can use LF or CRLF line endings depending on the server.
-        const events = buffer.split(/\r?\n\r?\n/)
+        // Backend uses sse-starlette EventSourceResponse with sep="\r\n".
+        const events = buffer.split(SSE_EVENT_DELIMITER)
         buffer = events.pop() || ''
 
         for (const eventBlock of events) {

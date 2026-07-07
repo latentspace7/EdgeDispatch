@@ -207,18 +207,16 @@ calls the dispatcher tolerates before escalating.
                       │
             Local SLM chooses MCP tools from M
             ── model-driven dispatch (Eq 2.1) ──
-            │                     │
- actual calls < threshold  actual calls >= threshold
-       D = 0 (local)         D = 1 (escalate)
-            │                     │
-            ▼                     ▼
-┌──────────────────────┐  ┌───────────────────────────┐
-│ Local resolve agent  │  │ Local escalate agent      │
-│ (llama.cpp :8080)    │  │ (llama.cpp :8080)         │
-│ MCP tools → answer   │  │ MCP tools → escalate_query│
-│ Zero cloud tokens    │  │ → handoff doc H           │
-└──────────────────────┘  └─────────────┬─────────────┘
-                                        ▼
+            │
+            ▼
+┌─────────────────────────────────────────────┐
+│ Local dispatch agent (llama.cpp :8080)       │
+│ MCP tools + optional escalate_query          │
+└──────────────┬───────────────────┬──────────┘
+               │                   │
+    D = 0 local answer     D = 1 handoff doc H
+    zero cloud tokens             │
+                                  ▼
                           ┌───────────────────────────┐
                           │ Cloud synthesis agent     │
                           │ (OpenAI gpt-4o)           │

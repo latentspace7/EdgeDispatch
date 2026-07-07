@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react'
-import type { Conversation, Message } from '@/lib/types'
+import { useState, useEffect } from 'react'
+import type { Conversation } from '@/lib/types'
 import { generateId } from '@/lib/utils'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useChat } from '@/hooks/useChat'
@@ -21,11 +21,11 @@ export default function App() {
     'edgedispatch-threshold',
     2,
   )
-  const [priceInput, setPriceInput] = useLocalStorage<number>(
+  const [, setPriceInput] = useLocalStorage<number>(
     'edgedispatch-price-input',
     5,
   )
-  const [priceOutput, setPriceOutput] = useLocalStorage<number>(
+  const [, setPriceOutput] = useLocalStorage<number>(
     'edgedispatch-price-output',
     15,
   )
@@ -62,9 +62,9 @@ export default function App() {
           : c,
       ),
     )
-  }, [messages, activeId])
+  }, [messages, activeId, setConversations])
 
-  const handleNewConversation = useCallback(() => {
+  const handleNewConversation = () => {
     cancelStream()
     clearMessages()
 
@@ -78,78 +78,63 @@ export default function App() {
 
     setConversations((prev) => [newConv, ...prev])
     setActiveId(newConv.id)
-  }, [cancelStream, clearMessages, setConversations, setActiveId])
+  }
 
-  const handleSelectConversation = useCallback(
-    (conv: Conversation) => {
-      cancelStream()
-      setActiveId(conv.id)
-      loadMessages(conv.messages)
-    },
-    [cancelStream, setActiveId, loadMessages],
-  )
+  const handleSelectConversation = (conv: Conversation) => {
+    cancelStream()
+    setActiveId(conv.id)
+    loadMessages(conv.messages)
+  }
 
-  const handleDeleteConversation = useCallback(
-    (convId: string) => {
-      cancelStream()
+  const handleDeleteConversation = (convId: string) => {
+    cancelStream()
 
-      setConversations((prev) => {
-        const filtered = prev.filter((c) => c.id !== convId)
+    setConversations((prev) => {
+      const filtered = prev.filter((c) => c.id !== convId)
 
-        // If deleting active conversation, switch to most recent or clear
-        if (convId === activeId) {
-          if (filtered.length > 0) {
-            const next = filtered[0]
-            setActiveId(next.id)
-            loadMessages(next.messages)
-          } else {
-            setActiveId(null)
-            clearMessages()
-          }
+      // If deleting active conversation, switch to most recent or clear
+      if (convId === activeId) {
+        if (filtered.length > 0) {
+          const next = filtered[0]
+          setActiveId(next.id)
+          loadMessages(next.messages)
+        } else {
+          setActiveId(null)
+          clearMessages()
         }
-
-        return filtered
-      })
-    },
-    [activeId, cancelStream, clearMessages, loadMessages, setActiveId, setConversations],
-  )
-
-  const handleSend = useCallback(
-    (content: string) => {
-      // Auto-create conversation if none active
-      let convId = activeId
-      if (!convId) {
-        const newConv: Conversation = {
-          id: generateId(),
-          title: content.slice(0, 60),
-          messages: [],
-          createdAt: Date.now() / 1000,
-          updatedAt: Date.now() / 1000,
-        }
-        setConversations((prev) => [newConv, ...prev])
-        setActiveId(newConv.id)
-        convId = newConv.id
       }
 
-      sendMessage(content, convId, threshold)
-    },
-    [activeId, threshold, sendMessage, setConversations, setActiveId],
-  )
+      return filtered
+    })
+  }
 
-  const handleThresholdChange = useCallback(
-    (t: number) => {
-      setThreshold(t)
-    },
-    [setThreshold],
-  )
+  const handleSend = (content: string) => {
+    // Auto-create conversation if none active
+    let convId = activeId
+    if (!convId) {
+      const newConv: Conversation = {
+        id: generateId(),
+        title: content.slice(0, 60),
+        messages: [],
+        createdAt: Date.now() / 1000,
+        updatedAt: Date.now() / 1000,
+      }
+      setConversations((prev) => [newConv, ...prev])
+      setActiveId(newConv.id)
+      convId = newConv.id
+    }
 
-  const handlePricingChange = useCallback(
-    (inputPerMTok: number, outputPerMTok: number) => {
-      setPriceInput(inputPerMTok)
-      setPriceOutput(outputPerMTok)
-    },
-    [setPriceInput, setPriceOutput],
-  )
+    sendMessage(content, convId, threshold)
+  }
+
+  const handleThresholdChange = (t: number) => {
+    setThreshold(t)
+  }
+
+  const handlePricingChange = (inputPerMTok: number, outputPerMTok: number) => {
+    setPriceInput(inputPerMTok)
+    setPriceOutput(outputPerMTok)
+  }
 
   return (
     <div className="latrobe-shell h-screen flex text-[#242424] antialiased">

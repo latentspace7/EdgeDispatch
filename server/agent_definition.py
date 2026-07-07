@@ -78,24 +78,6 @@ def create_high_end_model_provider() -> OpenAIProvider:
 # Agent Instructions
 # ──────────────────────────────────────────────
 
-# Legacy local-only instructions retained for compatibility with older callers.
-LOCAL_AGENT_RESOLVE_INSTRUCTIONS = """You are the EdgeDispatch local dispatch agent running on consumer hardware.
-Use the MCP tool manifest below to decide which tools are necessary. Invoke only
-the tools needed to answer the user's query.
-
-Your responsibilities:
-1. Analyze the user query against the tool manifest below.
-2. Invoke the necessary MCP tools to retrieve the required information.
-3. Synthesize a complete, well-reasoned answer directly to the user using the
-   retrieved evidence. Cite which tool/source each fact came from.
-4. You CANNOT escalate — no escalation tool is available. Answer fully here.
-
-Tool Manifest (compact descriptions of available tools):
-{tool_manifest}
-
-If a tool returns no useful evidence, say so honestly rather than fabricating.
-"""
-
 # Model-driven dispatch instructions. The agent has MCP tools and the
 # `escalate_query` function; the UI threshold is the manual routing control.
 LOCAL_AGENT_ESCALATE_INSTRUCTIONS = """You are the EdgeDispatch local dispatch agent running on consumer hardware.
@@ -177,11 +159,12 @@ class EdgeDispatchHandoffInput(BaseModel):
 
 def make_escalation_function():
     """
-    Create the escalation function that the escalate-variant local agent calls
+    Create the escalation function that the local dispatch agent calls
     to package a structured handoff document for the cloud tier.
 
-    The function stores the handoff prompt in the run context so the orchestrator
-    can detect escalation and forward to the high-end agent.
+    The function stores structured handoff fields in the run context so the
+    orchestrator can detect escalation and forward evidence to the high-end
+    agent.
     """
     async def escalate_query(
         context: RunContextWrapper[dict[str, Any]],
@@ -213,19 +196,18 @@ def make_escalation_function():
         )
 
         # Store handoff data in context for the orchestrator to detect
-        context.context["handoff_document"] = handoff_input.to_prompt()
         context.context["escalated"] = True
-        context.context["evidence"] = evidence
-        context.context["selected_tools"] = tools_list
-        context.context["rationale"] = rationale
+        context.context["evidence"] = handoff_input.evidence
+        context.context["selected_tools"] = handoff_input.selected_tools
+        context.context["rationale"] = handoff_input.rationale
 
         logger.info(
             "Escalating to high-end agent: %d tools needed, rationale=%s",
-            len(tools_list),
-            rationale[:80],
+            len(handoff_input.selected_tools),
+            handoff_input.rationale[:80],
         )
         return (
-            f"Handoff prepared. Query requires {len(tools_list)} tools. "
+            f"Handoff prepared. Query requires {len(handoff_input.selected_tools)} tools. "
             f"The high-end synthesis agent will now process the evidence."
         )
 
@@ -236,53 +218,17 @@ def make_escalation_function():
 # Agent Factory Functions
 # ──────────────────────────────────────────────
 
-def create_local_resolve_agent(
+def create_local_dispatch_agent(
     mcp_servers: list[MCPServer],
     tool_threshold: int = DEFAULT_TOOL_THRESHOLD,
     tool_manifest: str = "",
 ) -> tuple[Agent[dict[str, Any]], OpenAIProvider]:
     """
-    Create the local agent variant used when the dispatcher routes locally (D=0).
+    Create the local model-driven dispatch agent.
 
-    This agent has MCP tools but NO escalation tool. It must answer directly.
-    """
-    model_provider = create_local_model_provider()
-    model_settings = ModelSettings(temperature=TEMPERATURE_LOCAL)
-
-    instructions = LOCAL_AGENT_RESOLVE_INSTRUCTIONS.format(
-        tool_threshold=tool_threshold,
-        tool_manifest=tool_manifest,
-    )
-
-    agent = Agent(
-        name="EdgeDispatch Local Agent",
-        handoff_description="Local dispatch agent that resolves queries entirely at the edge",
-        instructions=instructions,
-        model=LOCAL_MODEL_NAME,
-        model_settings=model_settings,
-        mcp_servers=mcp_servers,
-        tool_use_behavior="run_llm_again",
-    )
-
-    logger.info(
-        "Created local resolve agent: model=%s, threshold=%d, mcp_servers=%d",
-        LOCAL_MODEL_NAME,
-        tool_threshold,
-        len(mcp_servers),
-    )
-    return agent, model_provider
-
-
-def create_local_escalate_agent(
-    mcp_servers: list[MCPServer],
-    tool_threshold: int = DEFAULT_TOOL_THRESHOLD,
-    tool_manifest: str = "",
-) -> tuple[Agent[dict[str, Any]], OpenAIProvider]:
-    """
-    Create the local agent variant used when the dispatcher routes to cloud (D=1).
-
-    This agent has MCP tools AND the escalate_query tool. It gathers evidence
-    then hands off to the cloud synthesizer.
+    The agent has MCP tools and the `escalate_query` tool. It can answer
+    locally when evidence is sufficient, or package a handoff for cloud
+    synthesis when the model or backend threshold requires escalation.
     """
     model_provider = create_local_model_provider()
     model_settings = ModelSettings(temperature=TEMPERATURE_LOCAL)
@@ -314,7 +260,7 @@ def create_local_escalate_agent(
     )
 
     logger.info(
-        "Created local escalate agent: model=%s, threshold=%d, mcp_servers=%d",
+        "Created local dispatch agent: model=%s, threshold=%d, mcp_servers=%d",
         LOCAL_MODEL_NAME,
         tool_threshold,
         len(mcp_servers),
@@ -410,13 +356,8 @@ class EdgeDispatchOrchestrator:
             manifest_size=len(self.router.manifest),
         )
 
-        # Create both local-agent variants + the cloud synthesizer
-        self.local_resolve_agent, self.local_resolve_provider = create_local_resolve_agent(
-            mcp_servers=mcp_servers,
-            tool_threshold=tool_threshold,
-            tool_manifest=self.tool_manifest,
-        )
-        self.local_escalate_agent, self.local_escalate_provider = create_local_escalate_agent(
+        # Create the local dispatch agent and the cloud synthesizer.
+        self.local_dispatch_agent, self.local_dispatch_provider = create_local_dispatch_agent(
             mcp_servers=mcp_servers,
             tool_threshold=tool_threshold,
             tool_manifest=self.tool_manifest,
@@ -487,7 +428,6 @@ class EdgeDispatchOrchestrator:
             "tool_manifest": self.tool_manifest,
             "route_decision": "model_decided",
             "escalated": False,
-            "handoff_document": None,
             "evidence": [],
             "selected_tools": [],
             "rationale": "",
@@ -495,7 +435,7 @@ class EdgeDispatchOrchestrator:
 
         # Step 2: Run the local model with MCP tools and escalation available.
         run_config = RunConfig(
-            model_provider=self.local_escalate_provider,
+            model_provider=self.local_dispatch_provider,
             model_settings=ModelSettings(temperature=TEMPERATURE_LOCAL),
             workflow_name="EdgeDispatch Pipeline",
             trace_metadata={
@@ -507,7 +447,7 @@ class EdgeDispatchOrchestrator:
 
         try:
             local_result = Runner.run_streamed(
-                starting_agent=self.local_escalate_agent,
+                starting_agent=self.local_dispatch_agent,
                 input=query,
                 context=run_context,
                 max_turns=MAX_TURNS_LOCAL,
@@ -717,8 +657,7 @@ class EdgeDispatchOrchestrator:
 
     async def close(self):
         """Release resources held by the orchestrator."""
-        await self.local_resolve_provider.aclose()
-        await self.local_escalate_provider.aclose()
+        await self.local_dispatch_provider.aclose()
         await self.high_end_provider.aclose()
 
     # ── Internal helpers ──────────────────────
@@ -919,7 +858,7 @@ class EdgeDispatchOrchestrator:
         return enriched
 
     def _infer_local_tools_used(self) -> list[str]:
-        """Best-effort inference of which MCP tools the resolve agent invoked."""
+        """Best-effort inference of which MCP tools the local dispatch agent invoked."""
         used: list[str] = []
         for record in self.hooks.tool_call_records:
             if record.tool_type == "mcp" and record.tool_name not in used:

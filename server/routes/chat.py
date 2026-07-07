@@ -25,6 +25,7 @@ from server.routes.settings import get_current_threshold
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
+SSE_SEPARATOR = "\r\n"
 
 # In-memory conversation store
 _conversations: dict[str, Conversation] = {}
@@ -74,6 +75,8 @@ async def chat(body: ChatRequest):
     query = body.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+    if _orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not configured")
 
     conv_id = body.conversation_id or str(uuid.uuid4())
     threshold = (
@@ -99,94 +102,72 @@ async def chat(body: ChatRequest):
                 }),
             }
 
-            # Process through orchestrator if available
-            if _orchestrator is not None:
-                # Update orchestrator threshold
-                _orchestrator.set_threshold(threshold)
+            # Update orchestrator threshold
+            _orchestrator.set_threshold(threshold)
 
-                yield {
-                    "event": "status",
-                    "data": json.dumps({
-                        "type": "routing",
-                        "message": (
-                            "Local model is choosing tools. "
-                            f"Escalation threshold: {threshold} actual MCP call(s)."
-                        ),
-                        "threshold": threshold,
-                    }),
-                }
+            yield {
+                "event": "status",
+                "data": json.dumps({
+                    "type": "routing",
+                    "message": (
+                        "Local model is choosing tools. "
+                        f"Escalation threshold: {threshold} actual MCP call(s)."
+                    ),
+                    "threshold": threshold,
+                }),
+            }
 
-                result = None
-                async for stream_event in _orchestrator.process_query_stream(query):
-                    event_type = stream_event.get("event")
+            result = None
+            async for stream_event in _orchestrator.process_query_stream(query):
+                event_type = stream_event.get("event")
 
-                    if event_type == "status":
-                        yield {
-                            "event": "status",
-                            "data": json.dumps(stream_event.get("data", {})),
-                        }
-                        continue
-
-                    if event_type == "token":
-                        chunk = str(stream_event.get("data", ""))
-                        assistant_content += chunk
-                        yield {
-                            "event": "token",
-                            "data": chunk,
-                        }
-                        continue
-
-                    if event_type == "result":
-                        result = stream_event.get("result")
-
-                if result is None:
-                    raise RuntimeError("Orchestrator completed without a result")
-
-                # Emit done with metadata + cost breakdown
-                done_payload: dict[str, Any] = {
-                    "conversation_id": conv_id,
-                    "was_escalated": result.was_escalated,
-                    "tool_count": result.tool_count,
-                    "threshold": result.tool_threshold,
-                }
-                if result.handoff_document is not None:
-                    done_payload["handoff"] = {
-                        "query": result.handoff_document.query,
-                        "selected_tools": result.handoff_document.selected_tools,
-                        "rationale": result.handoff_document.rationale,
-                        "evidence": result.handoff_document.evidence,
-                        "tool_threshold": result.handoff_document.tool_threshold,
-                        "prompt": result.handoff_document.to_compact_prompt(),
+                if event_type == "status":
+                    yield {
+                        "event": "status",
+                        "data": json.dumps(stream_event.get("data", {})),
                     }
-                if result.cost is not None:
-                    done_payload["cost"] = result.cost.as_dict()
-                if result.evaluation:
-                    done_payload["evaluation"] = result.evaluation
+                    continue
 
-                yield {
-                    "event": "done",
-                    "data": json.dumps(done_payload),
+                if event_type == "token":
+                    chunk = str(stream_event.get("data", ""))
+                    assistant_content += chunk
+                    yield {
+                        "event": "token",
+                        "data": chunk,
+                    }
+                    continue
+
+                if event_type == "result":
+                    result = stream_event.get("result")
+
+            if result is None:
+                raise RuntimeError("Orchestrator completed without a result")
+
+            # Emit done with metadata + cost breakdown
+            done_payload: dict[str, Any] = {
+                "conversation_id": conv_id,
+                "was_escalated": result.was_escalated,
+                "tool_count": result.tool_count,
+                "threshold": result.tool_threshold,
+            }
+            if result.handoff_document is not None:
+                done_payload["handoff"] = {
+                    "query": result.handoff_document.query,
+                    "selected_tools": result.handoff_document.selected_tools,
+                    "rationale": result.handoff_document.rationale,
+                    "evidence": result.handoff_document.evidence,
+                    "tool_threshold": result.handoff_document.tool_threshold,
+                    "prompt": result.handoff_document.to_compact_prompt(),
                 }
-            else:
-                # No orchestrator: return a mock message
-                mock_response = (
-                    f"Received your query: \"{query}\". (Orchestrator not configured, "
-                    "connect MCP servers and models to enable full processing.)"
-                )
-                assistant_content = mock_response
-                yield {
-                    "event": "token",
-                    "data": mock_response,
-                }
-                yield {
-                    "event": "done",
-                    "data": json.dumps({
-                        "conversation_id": conv_id,
-                        "was_escalated": False,
-                        "tool_count": 0,
-                        "threshold": threshold,
-                    }),
-                }
+            if result.cost is not None:
+                done_payload["cost"] = result.cost.as_dict()
+            if result.evaluation:
+                done_payload["evaluation"] = result.evaluation
+
+            yield {
+                "event": "done",
+                "data": json.dumps(done_payload),
+            }
 
         except Exception as e:
             logger.exception("Chat processing error")
@@ -202,7 +183,7 @@ async def chat(body: ChatRequest):
         if assistant_content:
             store_message(conv_id, "assistant", assistant_content)
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), sep=SSE_SEPARATOR)
 
 
 @router.get("/conversations", response_model=list[Conversation])

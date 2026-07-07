@@ -30,23 +30,31 @@ export default function SettingsDialog({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (open) {
-      setError(null)
-      setSaving(false)
-      setLocalThreshold(threshold)
-      fetchSettings()
-        .then((s) => {
-          setSettings(s)
-          setLocalThreshold(s.toolThreshold)
-          setPriceInput(s.priceInputPerMTok)
-          setPriceOutput(s.priceOutputPerMTok)
-          onThresholdChange(s.toolThreshold)
-          onPricingChange?.(s.priceInputPerMTok, s.priceOutputPerMTok)
-        })
-        .catch((e) => {
-          console.error('Failed to load settings:', e)
-          setError('Could not load settings. Check that the backend is running.')
-        })
+    if (!open) return
+
+    let cancelled = false
+
+    fetchSettings()
+      .then((s) => {
+        if (cancelled) return
+
+        setError(null)
+        setSettings(s)
+        setLocalThreshold(s.toolThreshold)
+        setPriceInput(s.priceInputPerMTok)
+        setPriceOutput(s.priceOutputPerMTok)
+        onThresholdChange(s.toolThreshold)
+        onPricingChange?.(s.priceInputPerMTok, s.priceOutputPerMTok)
+      })
+      .catch((e) => {
+        if (cancelled) return
+
+        console.error('Failed to load settings:', e)
+        setError('Could not load settings. Check that the backend is running.')
+      })
+
+    return () => {
+      cancelled = true
     }
   }, [open, threshold, onThresholdChange, onPricingChange])
 

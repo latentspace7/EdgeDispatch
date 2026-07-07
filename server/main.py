@@ -65,6 +65,16 @@ def _build_mcp_servers() -> list[MCPServerStdio]:
     return servers
 
 
+async def _cleanup_mcp_server(server: MCPServerStdio) -> None:
+    """Best-effort cleanup for an MCP stdio subprocess."""
+    try:
+        await server.cleanup()
+    except BaseException as e:
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
+        logger.warning("MCP server cleanup error (%s): %s", server.name, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: initialize and clean up the orchestrator + MCP servers."""
@@ -73,39 +83,43 @@ async def lifespan(app: FastAPI):
     logger.info("Starting EdgeDispatch server...")
 
     mcp_servers = _build_mcp_servers()
+    connected_mcp_servers: list[MCPServerStdio] = []
     logger.info("Built %d MCP stdio servers: %s", len(mcp_servers), [s.name for s in mcp_servers])
 
-    # Connect each MCP server before handing them to the orchestrator.
-    for server in mcp_servers:
-        try:
-            await server.connect()
-            logger.info("Connected MCP server: %s", server.name)
-        except Exception as e:
-            logger.warning("Failed to connect MCP server %s: %s (continuing)", server.name, e)
+    try:
+        # Connect each MCP server before handing it to the orchestrator.
+        for server in mcp_servers:
+            try:
+                await server.connect()
+                connected_mcp_servers.append(server)
+                logger.info("Connected MCP server: %s", server.name)
+            except Exception as e:
+                logger.warning("Failed to connect MCP server %s: %s (skipping)", server.name, e)
+                await _cleanup_mcp_server(server)
 
-    _orchestrator = EdgeDispatchOrchestrator(
-        mcp_servers=mcp_servers,
-        tool_threshold=2,
-    )
+        _orchestrator = EdgeDispatchOrchestrator(
+            mcp_servers=connected_mcp_servers,
+            tool_threshold=2,
+        )
 
-    # Inject orchestrator into chat routes
-    chat.set_orchestrator(_orchestrator)
+        # Inject orchestrator into chat routes
+        chat.set_orchestrator(_orchestrator)
 
-    logger.info("EdgeDispatch orchestrator ready")
+        logger.info(
+            "EdgeDispatch orchestrator ready with %d connected MCP server(s)",
+            len(connected_mcp_servers),
+        )
 
-    yield
-
-    # Cleanup
-    if _orchestrator:
-        await _orchestrator.close()
-    for server in mcp_servers:
-        try:
-            await server.cleanup()
-        except BaseException as e:  # best-effort teardown; don't propagate CancelledError
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                raise
-            logger.warning("MCP server cleanup error (%s): %s", server.name, e)
-    logger.info("EdgeDispatch server shut down")
+        yield
+    finally:
+        # Cleanup
+        if _orchestrator:
+            await _orchestrator.close()
+            _orchestrator = None
+        chat.set_orchestrator(None)
+        for server in connected_mcp_servers:
+            await _cleanup_mcp_server(server)
+        logger.info("EdgeDispatch server shut down")
 
 
 app = FastAPI(

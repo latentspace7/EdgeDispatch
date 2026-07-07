@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
-import { Send, Zap, ZapOff } from 'lucide-react'
+import { Send, ZapOff } from 'lucide-react'
 
 interface Props {
   onSend: (message: string) => void
