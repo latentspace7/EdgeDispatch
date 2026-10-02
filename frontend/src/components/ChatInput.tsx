@@ -1,77 +1,82 @@
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
-import { Send, ZapOff } from 'lucide-react'
+import { useState } from "react";
+import { ArrowUp, Square } from "lucide-react";
 
 interface Props {
-  onSend: (message: string) => void
-  onCancel: () => void
-  isStreaming: boolean
-  disabled?: boolean
+  busy: boolean;
+  disabled: boolean;
+  onSend: (query: string, remote: boolean) => Promise<void>;
+  onCancel: () => void;
 }
-
-export default function ChatInput({ onSend, onCancel, isStreaming, disabled }: Props) {
-  const [input, setInput] = useState('')
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + 'px'
-    }
-  }, [input])
-
-  const handleSend = () => {
-    const trimmed = input.trim()
-    if (!trimmed || isStreaming || disabled) return
-    onSend(trimmed)
-    setInput('')
-  }
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
+export default function ChatInput({ busy, disabled, onSend, onCancel }: Props) {
+  const [query, setQuery] = useState("");
+  const [remote, setRemote] = useState(false);
+  const [sending, setSending] = useState(false);
+  async function submit() {
+    if (!query.trim() || busy || sending || disabled) return;
+    setSending(true);
+    try {
+      await onSend(query, remote);
+      setQuery("");
+      setRemote(false);
+    } catch {
+      return;
+    } finally {
+      setSending(false);
     }
   }
-
   return (
-    <div className="border-t border-[#d4d1c8] bg-[#eceae3]/95 p-4">
-      <div className="max-w-3xl mx-auto">
-        <div className="relative flex items-end gap-2 bg-white border border-[#cbc7bd] rounded-xl p-2 transition-all duration-300 focus-within:border-[#e2231a]/70 focus-within:shadow-neon-cyan">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask anything..."
-            rows={1}
-            disabled={disabled}
-            className="flex-1 bg-transparent text-sm text-[#242424] placeholder-[#77736a] resize-none outline-none px-3 py-2 max-h-40 disabled:opacity-50"
-          />
-
-          <button
-            onClick={isStreaming ? onCancel : handleSend}
-            disabled={!input.trim() && !isStreaming}
-            className={`
-              flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center
-              transition-all duration-300
-              ${isStreaming
-                ? 'bg-edge-rose/20 text-edge-rose border border-edge-rose/30 hover:bg-edge-rose/30'
-                : 'bg-[#e2231a] text-white border border-[#b41414] hover:bg-[#b41414] hover:shadow-neon-cyan disabled:opacity-30 disabled:hover:shadow-none'
-              }
-            `}
-          >
-            {isStreaming ? (
-              <ZapOff className="w-4 h-4" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-          </button>
+    <div className="composer-wrap">
+      <div className="composer">
+        <label className="sr-only" htmlFor="message">
+          Message
+        </label>
+        <textarea
+          id="message"
+          disabled={sending || disabled}
+          rows={3}
+          placeholder="Ask about an employee, a document, or a policy…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        />
+        <div className="composer-actions">
+          <label>
+            <input
+              type="checkbox"
+              disabled={sending || disabled}
+              checked={remote}
+              onChange={(event) => setRemote(event.target.checked)}
+            />{" "}
+            Escalate directly
+          </label>
+          {busy ? (
+            <button className="stop" onClick={onCancel}>
+              <Square size={13} /> Stop
+            </button>
+          ) : (
+            <button
+              className="primary"
+              aria-label="Send message"
+              disabled={disabled || sending || !query.trim()}
+              onClick={() => void submit()}
+            >
+              <ArrowUp size={18} />
+            </button>
+          )}
         </div>
-
-        <p className="text-[10px] text-[#6d6a62] text-center mt-2">
-          EdgeDispatch - hybrid local + cloud inference
-        </p>
       </div>
+      <small>
+        Enter to send · Shift + Enter for a new line · Verify important answers
+      </small>
     </div>
-  )
+  );
 }

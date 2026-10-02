@@ -1,135 +1,146 @@
-import { useEffect, useRef } from 'react'
-import type { Message, Conversation } from '@/lib/types'
-import MessageBubble from './MessageBubble'
-import ChatInput from './ChatInput'
-import { Settings } from 'lucide-react'
+import { useEffect, useRef, useState } from "react";
+import { errorMessage } from "@/lib/api";
+import { isActive, policySchema } from "@/lib/types";
+import type { Conversation, Policy } from "@/lib/types";
+import ChatInput from "./ChatInput";
+import MessageBubble from "./MessageBubble";
 
 interface Props {
-  conversation: Conversation | null
-  messages: Message[]
-  isStreaming: boolean
-  statusMessage: string
-  threshold: number
-  showHandoffDetails: boolean
-  onSend: (message: string) => void
-  onCancel: () => void
-  onSettings: () => void
+  conversation: Conversation | null;
+  submitting: boolean;
+  loading: boolean;
+  disabled: boolean;
+  onSend: (query: string, remote: boolean) => Promise<void>;
+  onCancel: () => void;
+  onPolicy: (policy: Policy) => Promise<void>;
+  onReset: () => Promise<void>;
+  onApproval: (turn: string, action: string, approved: boolean) => void;
+  onReconcile: (turn: string) => void;
 }
-
-export default function ChatInterface({
-  conversation,
-  messages,
-  isStreaming,
-  statusMessage,
-  threshold,
-  showHandoffDetails,
-  onSend,
-  onCancel,
-  onSettings,
-}: Props) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-
+export default function ChatInterface(props: Props) {
+  const { conversation } = props;
+  const bottom = useRef<HTMLDivElement>(null);
+  const [policyError, setPolicyError] = useState("");
+  const [updatingPolicy, setUpdatingPolicy] = useState(false);
+  const busy = props.submitting || Boolean(conversation?.turns.some(isActive));
+  const staysRemote =
+    conversation?.policy === "sticky_escalation" && conversation.sticky;
+  const tail = conversation?.turns.at(-1);
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    bottom.current?.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+      block: "end",
+    });
+  }, [tail?.answer, tail?.state]);
+  async function updatePolicy(action: () => Promise<void>) {
+    if (busy || updatingPolicy) return;
+    setUpdatingPolicy(true);
+    try {
+      await action();
+      setPolicyError("");
+    } catch (error) {
+      setPolicyError(errorMessage(error));
+    } finally {
+      setUpdatingPolicy(false);
     }
-  }, [messages, statusMessage])
-
+  }
   return (
-    <div className="flex-1 flex flex-col h-full bg-cyber-bg">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[#242424] bg-[#242424] text-white">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-md bg-[#e2231a] flex items-center justify-center shadow-[0_10px_24px_rgba(226,35,26,0.28)]">
-            <span className="text-[11px] font-bold text-white">E</span>
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold text-white truncate">
-              {conversation?.title || 'EdgeDispatch'}
-            </h1>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-white/62">
-                Threshold: {threshold} tools
-              </span>
-              {statusMessage && (
-                <>
-                  <span className="text-white/35">·</span>
-                  <span className="text-[10px] text-[#ff7a73] animate-pulse">
-                    {statusMessage}
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
+    <main className="chat-main">
+      <header className="chat-header">
+        <div>
+          <h1>{conversation?.title || "Your local-first assistant"}</h1>
+          <p>One request. The right execution path.</p>
         </div>
-
-        <button
-          onClick={onSettings}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Messages */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto overscroll-contain bg-[#f3f2ec]"
-      >
-        {messages.length === 0 ? (
-          /* Empty state */
-          <div className="flex flex-col items-center justify-center h-full px-6 text-center">
-            <div className="w-16 h-16 rounded-lg bg-[#e2231a] border border-[#b41414] flex items-center justify-center mb-6 animate-glow-cyan">
-              <span className="text-2xl font-bold text-white">
-                E
-              </span>
-            </div>
-            <h2 className="text-lg font-semibold text-[#242424] mb-2">
-              EdgeDispatch
+      </header>
+      {conversation && (
+        <div className="policy-bar">
+          <label>
+            Escalation policy{" "}
+            <select
+              value={conversation.policy}
+              disabled={busy || updatingPolicy}
+              onChange={(event) => {
+                const policy = policySchema.parse(event.target.value);
+                void updatePolicy(() => props.onPolicy(policy));
+              }}
+            >
+              <option value="sticky_escalation">
+                Stay remote after escalation
+              </option>
+              <option value="reconsider_each_turn">
+                Classify every new request
+              </option>
+            </select>
+          </label>
+          {staysRemote && (
+            <button
+              disabled={busy || updatingPolicy}
+              onClick={() => void updatePolicy(props.onReset)}
+              title="Reconsider the next request without clearing history. It may still be escalated."
+            >
+              Classify again
+            </button>
+          )}
+          <small aria-live="polite">
+            {updatingPolicy
+              ? "Saving policy…"
+              : staysRemote
+                ? "This chat stays remote until you choose Classify again."
+                : conversation.policy === "reconsider_each_turn"
+                  ? "Each new request will be classified."
+                  : "Next request will be classified. Escalation stays within this chat."}
+          </small>
+        </div>
+      )}
+      {policyError && <p role="alert">{policyError}</p>}
+      <div className="chat-scroll" aria-busy={props.loading}>
+        {props.loading && <p role="status">Loading conversation…</p>}
+        {!props.loading && !conversation?.turns.length && (
+          <div className="welcome">
+            <span className="welcome-eyebrow">YOUR WORK, CLOSER TO HOME</span>
+            <h2>
+              Start local.
+              <br />
+              Go further when needed.
             </h2>
-            <p className="text-sm text-[#424242] max-w-sm">
-              Hybrid LLM orchestration with local-first AI workflows.
-              Simple queries run locally. Complex tasks escalate to the cloud.
+            <p>
+              Your assistant handles work locally when it can and escalates when
+              needed, using the same connected tools and conversation.
             </p>
-            <div className="flex gap-3 mt-6">
-              <div className="px-3 py-1.5 rounded-md border border-[#242424]/20 bg-white text-[11px] text-[#424242]">
-                <span className="text-edge-cyan">●</span> Local inference
-              </div>
-              <div className="px-3 py-1.5 rounded-md border border-[#242424]/20 bg-white text-[11px] text-[#424242]">
-                <span className="text-edge-violet">●</span> Cloud synthesis
-              </div>
+            <div className="examples">
+              <span>Find Priya Shah’s annual leave balance</span>
+              <span>What does the annual leave policy require?</span>
+              <span>Compare the UK and US leave allowances</span>
             </div>
-          </div>
-        ) : (
-          <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
-            {messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                showHandoffDetails={showHandoffDetails}
-              />
-            ))}
-
-            {/* Streaming indicator */}
-            {isStreaming && (
-              <div className="flex items-center gap-2 px-4 py-2">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-edge-cyan animate-pulse" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-edge-cyan animate-pulse" style={{ animationDelay: '0.15s' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-edge-cyan animate-pulse" style={{ animationDelay: '0.3s' }} />
-                </div>
-              </div>
-            )}
           </div>
         )}
+        <div className="messages">
+          {conversation?.turns.map((turn) => (
+            <MessageBubble
+              key={turn.id}
+              turn={turn}
+              onApproval={props.onApproval}
+              onReconcile={props.onReconcile}
+            />
+          ))}
+        </div>
+        <div ref={bottom} />
       </div>
-
-      {/* Input */}
       <ChatInput
-        onSend={onSend}
-        onCancel={onCancel}
-        isStreaming={isStreaming}
+        key={conversation?.id || "new"}
+        busy={busy}
+        disabled={
+          props.disabled ||
+          updatingPolicy ||
+          Boolean(
+            conversation?.turns.some((t) => t.state === "needs_reconciliation"),
+          )
+        }
+        onSend={props.onSend}
+        onCancel={props.onCancel}
       />
-    </div>
-  )
+    </main>
+  );
 }

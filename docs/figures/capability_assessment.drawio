@@ -1,0 +1,105 @@
+<mxfile host="app.diagrams.net" type="device" version="24.7.17">
+  <diagram name="Initial paired capability study" id="capability_study">
+    <mxGraphModel dx="1000" dy="1300" grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1000" pageHeight="1250" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="generate" value="&lt;b&gt;1. Generate synthetic task bundles&lt;/b&gt;&lt;br&gt;&lt;br&gt;Qwen3.8-max: 12 capabilities across 12 business domains&lt;br&gt;Request, tools, initial records, documents and expected outcome" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#F0E9FC;strokeColor=#8256A7;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="38.50000000000001" width="840" height="122.99999999999999" as="geometry" />
+        </mxCell>
+        <mxCell id="validate" value="&lt;b&gt;2. Check the source and prepare the MCP world&lt;/b&gt;&lt;br&gt;&lt;br&gt;Schema validation, source review and independently reset state" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#E5EFFB;strokeColor=#4379AE;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="227.5" width="840" height="99.0" as="geometry" />
+        </mxCell>
+        <mxCell id="lfm" value="&lt;b&gt;3a. Execute with LFM2.5-2.6B&lt;/b&gt;&lt;br&gt;&lt;br&gt;Local executor, Q8_0&lt;br&gt;Save tool calls, results, answer&lt;br&gt;and final world state" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#DDF3EE;strokeColor=#268A7F;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="81.5" y="376.0" width="399.0" height="138.0" as="geometry" />
+        </mxCell>
+        <mxCell id="qwen" value="&lt;b&gt;3b. Execute with Qwen3.8-27B&lt;/b&gt;&lt;br&gt;&lt;br&gt;Comparison executor, Q8_0&lt;br&gt;Same task and starting state&lt;br&gt;Independent execution trajectory" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#F0E9FC;strokeColor=#8256A7;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="519.5" y="376.0" width="399.0" height="138.0" as="geometry" />
+        </mxCell>
+        <mxCell id="judge" value="&lt;b&gt;4. Judge the saved trajectories and review outcomes&lt;/b&gt;&lt;br&gt;&lt;br&gt;Qwen3.8-max judges anonymised A/B traces in the expanded collection&lt;br&gt;Check completion, facts, grounding, tool/state handling and constraints&lt;br&gt;Compare with the reference outcome and source evidence" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#FFF0DA;strokeColor=#C28832;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="572.5" width="840" height="141.0" as="geometry" />
+        </mxCell>
+        <mxCell id="pass" value="&lt;b&gt;5a. Reviewed local success&lt;/b&gt;&lt;br&gt;&lt;br&gt;LOCAL: task completed reliably" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#E4F3DF;strokeColor=#4C8B42;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="81.5" y="770.5" width="399.0" height="105.0" as="geometry" />
+        </mxCell>
+        <mxCell id="fail" value="&lt;b&gt;5b. Reviewed local failure&lt;/b&gt;&lt;br&gt;&lt;br&gt;ESCALATE: the local attempt was unreliable" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#FBE5E4;strokeColor=#B9615B;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="519.5" y="770.5" width="399.0" height="105.0" as="geometry" />
+        </mxCell>
+        <mxCell id="note" value="&lt;b&gt;Label policy&lt;/b&gt;&lt;br&gt;&lt;br&gt;Explicit escalation requests set ESCALATE directly&lt;br&gt;Unresolved cases have no training label" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#EFF1F5;strokeColor=#8793A5;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="931.0" width="840" height="90.0" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="generate" target="validate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.23928571428571427;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="validate" target="lfm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.7607142857142857;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="validate" target="qwen">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.23928571428571427;entryY=0;" edge="1" parent="1" source="lfm" target="judge">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.7607142857142857;entryY=0;" edge="1" parent="1" source="qwen" target="judge">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.23928571428571427;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="judge" target="pass">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.7607142857142857;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="judge" target="fail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="Final airline capability labels" id="source_review">
+    <mxGraphModel dx="1000" dy="1300" grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1000" pageHeight="1250" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="generate" value="&lt;b&gt;1. Generate synthetic airline questions&lt;/b&gt;&lt;br&gt;&lt;br&gt;Fictional booking, policy, support and refund records" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#F0E9FC;strokeColor=#8256A7;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="43.0" width="840" height="114.0" as="geometry" />
+        </mxCell>
+        <mxCell id="execute" value="&lt;b&gt;2. Execute with the unchanged local LFM model&lt;/b&gt;&lt;br&gt;&lt;br&gt;Save the request, tool calls, returned records, answer and termination status" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#DDF3EE;strokeColor=#268A7F;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="205.0" width="840" height="114.0" as="geometry" />
+        </mxCell>
+        <mxCell id="review" value="&lt;b&gt;3. Review local capability against the source&lt;/b&gt;&lt;br&gt;&lt;br&gt;Automated review agents check completeness, facts, policy application and calculations&lt;br&gt;Native grades are retained as separate diagnostic evidence" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#FFF0DA;strokeColor=#C28832;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="370.0" width="840" height="138.0" as="geometry" />
+        </mxCell>
+        <mxCell id="pass" value="&lt;b&gt;Supported success&lt;/b&gt;&lt;br&gt;&lt;br&gt;LOCAL&lt;br&gt;Unless the request or&lt;br&gt;capability constraint&lt;br&gt;requires escalation" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#E4F3DF;strokeColor=#4C8B42;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="81.5" y="563.5" width="261.0" height="159.0" as="geometry" />
+        </mxCell>
+        <mxCell id="fail" value="&lt;b&gt;Local failure&lt;/b&gt;&lt;br&gt;&lt;br&gt;ESCALATE&lt;br&gt;The remote result&lt;br&gt;does not change&lt;br&gt;this target" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#FBE5E4;strokeColor=#B9615B;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="369.5" y="563.5" width="261.0" height="159.0" as="geometry" />
+        </mxCell>
+        <mxCell id="unknown" value="&lt;b&gt;Unresolved&lt;/b&gt;&lt;br&gt;&lt;br&gt;Preserve the record&lt;br&gt;Exclude from&lt;br&gt;resolved labels" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#EFF1F5;strokeColor=#8793A5;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="657.5" y="563.5" width="261.0" height="159.0" as="geometry" />
+        </mxCell>
+        <mxCell id="dataset" value="&lt;b&gt;4. Form the final decision-training dataset&lt;/b&gt;&lt;br&gt;&lt;br&gt;1,020 contexts: 558 LOCAL and 462 ESCALATE&lt;br&gt;Input: pre-execution request and tool interface&lt;br&gt;Target: the reviewed decision label" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#E5EFFB;strokeColor=#4379AE;strokeWidth=1.4;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="80.0" y="779.5" width="552.0" height="135.0" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="generate" target="execute">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="execute" target="review">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.15714285714285714;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="review" target="pass">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="review" target="fail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.8428571428571429;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="review" target="unknown">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.2391304347826087;entryY=0;" edge="1" parent="1" source="pass" target="dataset">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#657385;strokeWidth=1.4;exitX=0.5;exitY=1;entryX=0.7608695652173914;entryY=0;" edge="1" parent="1" source="fail" target="dataset">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

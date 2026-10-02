@@ -1,0 +1,70 @@
+<mxfile host="app.diagrams.net" type="device" version="24.7.17">
+  <diagram name="Harness request flow" id="harness-flow">
+    <mxGraphModel dx="1100" dy="1400" grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1100" pageHeight="1350">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="ui" value="&lt;b&gt;1. React browser&lt;/b&gt;&lt;br&gt;&lt;br&gt;Create conversation and submit question&lt;br&gt;Conversation ID + unique request ID" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E5EFFB;strokeColor=#4379AE;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="63.65000000000001" y="35.025" width="596.3000000000001" height="117.25" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="&lt;b&gt;2. FastAPI accepts the turn&lt;/b&gt;&lt;br&gt;&lt;br&gt;Validate request and record settings&lt;br&gt;Deduplicate delivery" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F0E9FC;strokeColor=#8256A7;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="63.65000000000001" y="205.875" width="596.3000000000001" height="117.25" as="geometry" />
+        </mxCell>
+        <mxCell id="context" value="&lt;b&gt;3. Prepare the decision context&lt;/b&gt;&lt;br&gt;&lt;br&gt;Restore conversation history and discover MCP tools" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E5EFFB;strokeColor=#4379AE;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="63.65000000000001" y="376.72499999999997" width="596.3000000000001" height="117.25" as="geometry" />
+        </mxCell>
+        <mxCell id="decision" value="&lt;b&gt;4. Assess local capability&lt;/b&gt;&lt;br&gt;&lt;br&gt;Local LFM + decision adapter&lt;br&gt;Return LOCAL or ESCALATE" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#DDF3EE;strokeColor=#268A7F;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="63.65000000000001" y="547.5749999999999" width="596.3000000000001" height="117.25" as="geometry" />
+        </mxCell>
+        <mxCell id="loop" value="&lt;b&gt;5. Agents SDK execution loop&lt;/b&gt;&lt;br&gt;&lt;br&gt;LOCAL: LFM base, adapter disabled&lt;br&gt;ESCALATE: configured remote executor" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E4F3DF;strokeColor=#4C8B42;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="63.65000000000001" y="711.7249999999999" width="596.3000000000001" height="130.65" as="geometry" />
+        </mxCell>
+        <mxCell id="mcp" value="&lt;b&gt;6. Invoke the MCP tool servers&lt;/b&gt;&lt;br&gt;&lt;br&gt;Bookings (4) + policies (2) + support (3)&lt;br&gt;Validate arguments, call tool, return records" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF0DA;strokeColor=#C28832;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="63.65000000000001" y="895.9749999999999" width="596.3000000000001" height="130.65" as="geometry" />
+        </mxCell>
+        <mxCell id="answer" value="&lt;b&gt;7. Record and display the answer&lt;/b&gt;&lt;br&gt;&lt;br&gt;Server-sent events update the browser&lt;br&gt;Follow-up questions reuse the recorded history" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E5EFFB;strokeColor=#4379AE;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="63.65000000000001" y="1080.225" width="596.3000000000001" height="130.65" as="geometry" />
+        </mxCell>
+        <mxCell id="redis" value="&lt;b&gt;Redis&lt;/b&gt;&lt;br&gt;&lt;br&gt;Conversation lease&lt;br&gt;Renew ownership&lt;br&gt;Release at completion&lt;br&gt;Docker service" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FBE5E4;strokeColor=#B9615B;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="728.625" y="194.15" width="224.45000000000002" height="140.70000000000002" as="geometry" />
+        </mxCell>
+        <mxCell id="ledger" value="&lt;b&gt;JSONL ledger&lt;/b&gt;&lt;br&gt;&lt;br&gt;Durable local history&lt;br&gt;Question + decision&lt;br&gt;Tool calls + results&lt;br&gt;Usage + outcome" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EFF1F5;strokeColor=#8793A5;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="728.625" y="420.2750000000001" width="224.45000000000002" height="237.85" as="geometry" />
+        </mxCell>
+        <mxCell id="phoenix" value="&lt;b&gt;Phoenix&lt;/b&gt;&lt;br&gt;&lt;br&gt;Saved answer + evidence&lt;br&gt;Correctness + faithfulness&lt;br&gt;Docker service" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F0E9FC;strokeColor=#8256A7;fontColor=#263238;fontFamily=Arial;fontSize=17;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="728.625" y="1060.1249999999998" width="224.45000000000002" height="170.85" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" source="ui" target="api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" source="api" target="context" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" source="context" target="decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" source="decision" target="loop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" source="api" target="redis" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;startArrow=block;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" source="context" target="ledger" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" source="loop" target="ledger" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" source="loop" target="mcp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;startArrow=block;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" source="mcp" target="answer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" source="answer" target="phoenix" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#657384;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

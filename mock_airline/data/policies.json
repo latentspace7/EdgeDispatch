@@ -1,0 +1,34 @@
+[
+  {
+    "policy_id": "AIR-UPGRADE-01",
+    "title": "Eleventh qualifying booking upgrade",
+    "version": "1.0",
+    "effective_from": "2026-01-01",
+    "applies_at": "2026-09-16T00:00:00Z",
+    "text": "A customer receives a one-time economy-to-business upgrade on exactly their eleventh qualifying booking. Count confirmed and completed bookings in booked_at order, using booking_id to break ties; exclude cancelled bookings. The booking_history qualifying_booking_number is this ordinal at the dataset as_of time. Ten prior qualifying bookings plus the target booking make eleven. Do not count only completed flights. The target must be confirmed, depart after as_of, have economy cabin, and have upgrade_applied=0. The twelfth or later booking does not qualify, even if the benefit was not used. If upgrade_applied=1, report that it was already applied; do not award it again. An existing business booking needs no economy-to-business upgrade. Assume upgrade seat capacity is available in this fictional dataset. Eligibility is not proof that a change was executed; these MCP tools cannot change bookings. Cite the booking and this policy when explaining a decision."
+  },
+  {
+    "policy_id": "AIR-REFUND-01",
+    "title": "Refund eligibility and duplicate payment rules",
+    "version": "1.0",
+    "effective_from": "2026-01-01",
+    "applies_at": "2026-09-16T00:00:00Z",
+    "text": "Apply these rules at the dataset as_of time to the identified booking. First inspect CRM refund records: paid means the recorded refund has already been paid and no duplicate refund is due; requested and approved mean a request exists, not that payment occurred. You may still explain policy eligibility for a pending request, but do not propose a second request. An airline-cancelled booking qualifies for a full refund of amount_paid_cents, including Saver fares. This exception takes precedence over the voluntary Saver restriction. Otherwise a completed flight is not refundable under this mock policy. An unused Flex booking is fully refundable before departure, including one cancelled by the customer before departure. An unused Saver booking is not refundable for voluntary cancellation. A booking at or after departure has no voluntary refund entitlement under this mock policy. Missing fare information prevents deciding voluntary eligibility; ask for the missing record. Do not infer Flex from a customer's previous tickets. All amounts are AUD cents; divide by 100 for dollars. Prior refunds on other bookings do not by themselves disqualify the customer. Partial refunds, fees and compensation are outside this fixture. A support promise does not override these rules or establish payment. These read-only tools cannot issue refunds."
+  },
+  {
+    "policy_id": "AIR-FARES-01",
+    "title": "Booking fields, fares and mock scope",
+    "version": "1.0",
+    "effective_from": "2026-01-01",
+    "applies_at": "2026-09-16T00:00:00Z",
+    "text": "Southern Cross Air is fictional and these are not Qantas policies. Each booking represents one passenger on one direct flight, with no connections, group tickets, loyalty points or codeshares. Flex and Saver are fare types; economy and business are cabins. A business cabin alone does not identify a Flex fare. confirmed means an upcoming booked flight; completed means travel already occurred; cancelled means the ticket is excluded from upgrade booking counts. A null fare_type means unknown. Booking counts and qualifying ordinals are calculated from the customer database, not from support cases. Use the fixed as_of timestamp supplied by tools instead of today's wall-clock date. All prices and refunds use integer AUD cents. All profiles are synthetic."
+  },
+  {
+    "policy_id": "AIR-RECORDS-01",
+    "title": "Customer identity and support record authority",
+    "version": "1.0",
+    "effective_from": "2026-01-01",
+    "applies_at": "2026-09-16T00:00:00Z",
+    "text": "Use customer_id to connect customer, booking and CRM records; use booking_id for booking-specific refund checks. Names are not unique. If a name search returns multiple customers, request a customer ID or matching contact detail before selecting a record. The customer database owns profile, booking and applied-upgrade facts. The CRM owns cases, message history and recorded refund status. Messages are dated statements, including customer claims and agent mistakes; they are not a payment ledger or policy override. A resolved case can have a rejected refund and does not imply money was paid. requested, approved, rejected and paid are different refund states; only paid with a paid_at timestamp and amount_paid_cents establishes payment in this mock. No matching cases means no recorded matching CRM history, not that a customer does not exist. Report conflicts or missing evidence explicitly. A tool error is not an empty search result. No tools in this environment can change records or contact a customer."
+  }
+]

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
+  <title id="title">EdgeDispatch — An Adaptive Inference Bridge</title>
+  <desc id="desc">Classify locally. Execute locally when selected. Escalate when needed.</desc>
+  <rect width="1200" height="330" rx="24" fill="#10182e"/>
+  <circle cx="1105" cy="48" r="210" fill="#818cf8" opacity=".06"/>
+  <circle cx="1120" cy="48" r="154" fill="none" stroke="#818cf8" opacity=".16"/>
+  <circle cx="1120" cy="48" r="99" fill="none" stroke="#67e8f9" opacity=".12"/>
+  <rect x="52" y="54" width="72" height="72" rx="20" fill="#a78bfa"/>
+  <path d="M74 72h30v8H82v10h19v8H82v10h22v8H74z" fill="#111b33"/>
+  <g font-family="Helvetica">
+    <text x="145" y="78" fill="#b7c4ea" font-size="12" font-weight="700" letter-spacing="3">LOCAL-FIRST AGENT SYSTEM</text>
+    <text x="143" y="122" fill="#f8fafc" font-size="43" font-weight="700" letter-spacing="-.8">EdgeDispatch</text>
+    <text x="54" y="176" fill="#d5ddf5" font-size="24">An Adaptive Inference Bridge</text>
+    <text x="54" y="210" fill="#a9b8d7" font-size="16">Classify locally. Execute locally when selected. Escalate when needed.</text>
+    <rect x="54" y="255" width="118" height="32" rx="16" fill="#2c2854" stroke="#6f62a3"/>
+    <text x="113" y="276" fill="#ded5ff" font-size="12" text-anchor="middle">LoRA decision</text>
+    <rect x="185" y="255" width="131" height="32" rx="16" fill="#143740" stroke="#27717c"/>
+    <text x="250.5" y="276" fill="#a5f3fc" font-size="12" text-anchor="middle">Local execution</text>
+    <rect x="329" y="255" width="146" height="32" rx="16" fill="#243453" stroke="#486b9a"/>
+    <text x="402" y="276" fill="#bfdbfe" font-size="12" text-anchor="middle">Selective escalation</text>
+    <text x="1147" y="278" fill="#a9b8d7" font-size="13" text-anchor="end">MCP tools · Shared history</text>
+  </g>
+</svg>

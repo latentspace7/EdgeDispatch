@@ -1,126 +1,151 @@
-import { useState, useRef } from 'react'
-import type { Message } from '@/lib/types'
-import { generateId } from '@/lib/utils'
-import { streamChat, type ChatCallbacks } from '@/lib/api'
+import { useCallback, useEffect, useRef, useState } from "react";
+import { errorMessage, getConversation } from "@/lib/api";
+import {
+  applyChatEvent,
+  newerConversation,
+  parseChatEvent,
+} from "@/lib/chatState";
+import { isActive } from "@/lib/types";
+import type { Conversation } from "@/lib/types";
 
-interface UseChatReturn {
-  messages: Message[]
-  isStreaming: boolean
-  statusMessage: string
-  sendMessage: (content: string, conversationId: string, threshold: number) => void
-  cancelStream: () => void
-  clearMessages: () => void
-  loadMessages: (messages: Message[]) => void
+interface Selection {
+  id: string;
+  controller: AbortController;
+  request: number;
 }
 
-export function useChat(): UseChatReturn {
-  const [messages, setMessages] = useState<Message[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [statusMessage, setStatusMessage] = useState('')
-  const abortRef = useRef<AbortController | null>(null)
-  const assistantMsgIdRef = useRef<string>('')
-
-  const cancelStream = () => {
-    if (abortRef.current) {
-      abortRef.current.abort()
-      abortRef.current = null
-    }
-    setIsStreaming(false)
-    setStatusMessage('')
-  }
-
-  const sendMessage = (content: string, conversationId: string, threshold: number) => {
-    // Cancel any existing stream
-    cancelStream()
-
-    const userMsg: Message = {
-      id: generateId(),
-      role: 'user',
-      content,
-      timestamp: Date.now() / 1000,
-    }
-
-    const assistantMsgId = generateId()
-    assistantMsgIdRef.current = assistantMsgId
-
-    const assistantMsg: Message = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now() / 1000,
-    }
-
-    setMessages((prev) => [...prev, userMsg, assistantMsg])
-    setIsStreaming(true)
-    setStatusMessage('Analyzing query...')
-
-    const callbacks: ChatCallbacks = {
-      onToken: (text: string) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgIdRef.current
-              ? { ...m, content: m.content + text }
-              : m,
-          ),
+export function useChat(id: string | null, onSettled: () => void) {
+  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [error, setError] = useState({ id, message: "" });
+  const selected = useRef<Selection | null>(null);
+  const refresh = useCallback(
+    async (targetId = id) => {
+      const selection = selected.current;
+      if (!targetId || selection?.id !== targetId) return;
+      const request = ++selection.request;
+      let value: Conversation;
+      try {
+        value = await getConversation(targetId, selection.controller.signal);
+      } catch (error) {
+        if (
+          selected.current !== selection ||
+          selection.controller.signal.aborted ||
+          request !== selection.request
         )
-      },
-      onStatus: (msg: string) => {
-        setStatusMessage(msg)
-      },
-      onDone: (meta) => {
-        // Attach per-query metadata (cost, route, tool count) to the
-        // assistant message so it can be rendered beneath the answer.
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgIdRef.current
-              ? {
-                  ...m,
-                  cost: meta.cost,
-                  wasEscalated: meta.wasEscalated,
-                  toolCount: meta.toolCount,
-                  handoff: meta.handoff,
-                }
-              : m,
-          ),
-        )
-        setIsStreaming(false)
-        setStatusMessage('')
-        abortRef.current = null
-      },
-      onError: (msg: string) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgIdRef.current
-              ? { ...m, content: msg }
-              : m,
-          ),
-        )
-        setIsStreaming(false)
-        setStatusMessage('')
-        abortRef.current = null
-      },
+          return;
+        throw error;
+      }
+      if (
+        selected.current === selection &&
+        !selection.controller.signal.aborted &&
+        request === selection.request
+      ) {
+        setConversation((previous) => newerConversation(previous, value));
+        setError({ id: targetId, message: "" });
+      }
+    },
+    [id],
+  );
+
+  useEffect(() => {
+    if (!id) return;
+    const selection = { id, controller: new AbortController(), request: 0 };
+    selected.current = selection;
+    void refresh().catch((error: unknown) => {
+      if (!selection.controller.signal.aborted)
+        setError({ id, message: errorMessage(error) });
+    });
+    return () => {
+      selection.controller.abort();
+      selected.current = null;
+    };
+  }, [id, refresh]);
+
+  const visible = conversation?.id === id ? conversation : null;
+  const activeTurn = visible?.turns.find(isActive)?.id;
+  const awaitingQuality = visible?.turns.some(
+    (turn) =>
+      ["pending", "running"].includes(turn.quality?.status || "") ||
+      ["pending", "sending"].includes(turn.quality?.export_status || ""),
+  );
+  useEffect(() => {
+    if (!id || !awaitingQuality) return;
+    let stopped = false;
+    let timer: number;
+    async function poll() {
+      try {
+        await refresh();
+      } catch (error) {
+        if (!stopped) setError({ id, message: errorMessage(error) });
+      } finally {
+        if (!stopped) timer = window.setTimeout(() => void poll(), 5000);
+      }
     }
+    timer = window.setTimeout(() => void poll(), 5000);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [id, awaitingQuality, refresh]);
 
-    const controller = streamChat(content, conversationId, threshold, callbacks)
-    abortRef.current = controller
-  }
-
-  const clearMessages = () => {
-    cancelStream()
-    setMessages([])
-  }
-
-  const loadMessages = (msgs: Message[]) => {
-    setMessages(msgs)
-  }
+  useEffect(() => {
+    if (!activeTurn || !id) return;
+    const source = new EventSource(`/api/turns/${activeTurn}/events`);
+    let stopped = false;
+    let cursor = 0;
+    const reportError = (error: unknown) => {
+      if (!stopped) setError({ id, message: errorMessage(error) });
+    };
+    source.addEventListener("update", (event) => {
+      if (stopped) return;
+      try {
+        const data: unknown = event.data;
+        if (typeof data !== "string")
+          throw new Error("Invalid stream event data.");
+        const record = parseChatEvent(JSON.parse(data));
+        if (record.conversation_id !== id || record.turn_id !== activeTurn) {
+          throw new Error("Received an update for a different turn.");
+        }
+        if (record.sequence <= cursor) return;
+        cursor = record.sequence;
+        if (["approval_requested", "approval_resolved"].includes(record.type)) {
+          void refresh().catch(reportError);
+        }
+        setConversation((previous) =>
+          previous ? applyChatEvent(previous, record) : previous,
+        );
+      } catch (error) {
+        source.close();
+        reportError(error);
+      }
+    });
+    source.addEventListener("settled", () => {
+      source.close();
+      void refresh()
+        .then(() => {
+          if (!stopped) onSettled();
+        })
+        .catch(reportError);
+    });
+    source.onerror = () =>
+      reportError(
+        new Error(
+          "Connection interrupted. Reconnecting to the same turn - no resubmission.",
+        ),
+      );
+    source.onopen = () => {
+      if (!stopped) setError({ id, message: "" });
+    };
+    return () => {
+      stopped = true;
+      source.close();
+    };
+  }, [activeTurn, id, refresh, onSettled]);
 
   return {
-    messages,
-    isStreaming,
-    statusMessage,
-    sendMessage,
-    cancelStream,
-    clearMessages,
-    loadMessages,
-  }
+    conversation: visible,
+    refresh,
+    loading: Boolean(id && !visible && !(error.id === id && error.message)),
+    error: error.id === id ? error.message : "",
+  };
 }

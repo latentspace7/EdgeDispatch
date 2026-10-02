@@ -1,0 +1,80 @@
+{
+  "base_model": "LiquidAI/LFM2.5-2.6B",
+  "base_revision": "a4e00e83c0979ee9deb88d04b6360599fa956656",
+  "lora": {
+    "rank": 8,
+    "alpha": 16,
+    "dropout": 0.05,
+    "target_modules": [
+      "w1",
+      "w2",
+      "w3",
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "in_proj",
+      "out_proj"
+    ],
+    "bias": "none",
+    "dora": false,
+    "rslora": false
+  },
+  "training": {
+    "seed": 424244,
+    "epochs": 4,
+    "learning_rate": 5e-05,
+    "warmup_ratio": 0.1,
+    "weight_decay": 0.0,
+    "per_device_batch_size": 1,
+    "gradient_accumulation_steps": 16,
+    "effective_batch_size_single_gpu": 16,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "truncate": false,
+    "packing": false,
+    "assistant_only_loss": true,
+    "mask_prompt_and_padding": -100,
+    "loss": "Mean assistant-suffix cross entropy per example, multiplied by training-class weight; all examples retained once per epoch before shuffling",
+    "save_every_epoch": true,
+    "max_sequence_tokens": 24576,
+    "class_weights": {
+      "LOCAL": 0.9139784946236559,
+      "ESCALATE": 1.103896103896104
+    }
+  },
+  "population": {
+    "training": {
+      "rows": 1020,
+      "class_counts": {
+        "LOCAL": 558,
+        "ESCALATE": 462
+      }
+    },
+    "development": {
+      "rows": 199,
+      "class_counts": {
+        "LOCAL": 105,
+        "ESCALATE": 94
+      }
+    }
+  },
+  "development_max_sequence_tokens": 10240,
+  "tokenizer_sha256": {
+    "tokenizer.json": "695be7802a0e4b8a81048f0ff5ebb7fc811a0ba5a6be63dbb24deb5a81096f41",
+    "tokenizer_config.json": "dafaf730cfb6b26323f6ee8ee443b667d0c21a250e909bd3c4e472062d7c4d97",
+    "chat_template.jinja": "ea663864491de7ade391839479860ca95541f892f72665c73251fbd4643b1bef"
+  },
+  "selection_rule": {
+    "min_local_success_recall": 0.5,
+    "min_failure_recall": 0.6,
+    "max_invalid": 0
+  },
+  "train_rows": "evaluation/training_data/train.json",
+  "development_rows": "evaluation/training_data/development/development.json",
+  "development_requests": "evaluation/training_data/development/development_requests.json",
+  "input_sha256": {
+    "evaluation/training_data/train.json": "3965b79e8c7792bb55fe4d29f3815f7bf4373e918e0f7ff9ae2ea5c507a455f1",
+    "evaluation/training_data/development/development.json": "6563deea4fddea41808b6e890e01f86f53d56b1509687ead2cb5db8f72ec57be",
+    "evaluation/training_data/development/development_requests.json": "9d1ace6f164bd683c026e9892c801cb4f4a22ab56dffe271999315a37d8c5cb3"
+  }
+}

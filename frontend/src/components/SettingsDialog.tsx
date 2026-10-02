@@ -1,257 +1,181 @@
-import { useState, useEffect } from 'react'
-import { X, SlidersHorizontal, Cpu, Cloud, DollarSign, Save, FileText } from 'lucide-react'
-import type { Settings } from '@/lib/types'
-import { fetchSettings, updateSettings, type PricingUpdate } from '@/lib/api'
+import { useEffect, useRef, useState } from "react";
+import { errorMessage } from "@/lib/api";
+import { policySchema } from "@/lib/types";
+import type { Health, Preferences } from "@/lib/types";
 
 interface Props {
-  open: boolean
-  onClose: () => void
-  threshold: number
-  showHandoffDetails: boolean
-  onThresholdChange: (t: number) => void
-  onPricingChange?: (inputPerMTok: number, outputPerMTok: number) => void
-  onShowHandoffDetailsChange: (show: boolean) => void
+  preferences: Preferences;
+  health: Health | null;
+  onSave: (value: Preferences) => Promise<void>;
+  onClose: () => void;
 }
-
 export default function SettingsDialog({
-  open,
+  preferences,
+  health,
+  onSave,
   onClose,
-  threshold,
-  showHandoffDetails,
-  onThresholdChange,
-  onPricingChange,
-  onShowHandoffDetailsChange,
 }: Props) {
-  const [settings, setSettings] = useState<Settings | null>(null)
-  const [localThreshold, setLocalThreshold] = useState(threshold)
-  const [priceInput, setPriceInput] = useState<number>(5)
-  const [priceOutput, setPriceOutput] = useState<number>(15)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
+  const [draft, setDraft] = useState(preferences);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [error, setError] = useState("");
+  const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    if (!open) return
-
-    let cancelled = false
-
-    fetchSettings()
-      .then((s) => {
-        if (cancelled) return
-
-        setError(null)
-        setSettings(s)
-        setLocalThreshold(s.toolThreshold)
-        setPriceInput(s.priceInputPerMTok)
-        setPriceOutput(s.priceOutputPerMTok)
-        onThresholdChange(s.toolThreshold)
-        onPricingChange?.(s.priceInputPerMTok, s.priceOutputPerMTok)
-      })
-      .catch((e) => {
-        if (cancelled) return
-
-        console.error('Failed to load settings:', e)
-        setError('Could not load settings. Check that the backend is running.')
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [open, threshold, onThresholdChange, onPricingChange])
-
-  const handleSave = async () => {
-    if (saving) return
-
-    setError(null)
-    setSaving(true)
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  async function save() {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError("");
     try {
-      const update: PricingUpdate = {
-        threshold: localThreshold,
-        priceInputPerMTok: priceInput,
-        priceOutputPerMTok: priceOutput,
-      }
-      const updated = await updateSettings(update)
-      setLocalThreshold(updated.toolThreshold)
-      setPriceInput(updated.priceInputPerMTok)
-      setPriceOutput(updated.priceOutputPerMTok)
-      onThresholdChange(updated.toolThreshold)
-      onPricingChange?.(updated.priceInputPerMTok, updated.priceOutputPerMTok)
-      setSettings(updated)
-      onClose()
-    } catch (e) {
-      console.error('Failed to save settings:', e)
-      setError('Settings were not saved. Check the backend connection and try again.')
+      await onSave(draft);
+    } catch (error) {
+      setError(errorMessage(error));
     } finally {
-      setSaving(false)
+      savingRef.current = false;
+      setSaving(false);
     }
   }
-
-  if (!open) return null
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-[#242424]/35 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Dialog */}
-      <div className="relative w-full max-w-md mx-4 glass rounded-xl border border-[#242424]/14 shadow-neon-violet overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-[#d4d1c8] bg-white">
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="w-4 h-4 text-[#e2231a]" />
-            <h2 className="text-sm font-semibold text-[#242424]">Settings</h2>
-          </div>
+    <dialog
+      ref={dialog}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!saving) onClose();
+      }}
+      aria-labelledby="settings-title"
+      aria-busy={saving}
+      className="settings-dialog"
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <div className="dialog-title">
+          <h2 id="settings-title">Settings & connections</h2>
           <button
+            type="button"
+            disabled={saving}
             onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#6d6a62] hover:text-[#242424] hover:bg-[#f3f2ec] transition-colors"
+            aria-label="Close settings"
           >
-            <X className="w-4 h-4" />
+            ×
           </button>
         </div>
-
-        {/* Body */}
-        <div className="p-4 space-y-6 bg-[#f8f7f3]">
-          {/* Threshold slider */}
-          <div>
-            <label className="text-xs text-[#424242] uppercase tracking-wider font-medium mb-2 block">
-              Tool Threshold
-            </label>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min={1}
-                max={10}
-                value={localThreshold}
-                onChange={(e) => setLocalThreshold(Number(e.target.value))}
-                className="flex-1 h-1.5 rounded-full appearance-none bg-[#d4d1c8] cursor-pointer
-                  [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4
-                  [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full
-                  [&::-webkit-slider-thumb]:bg-[#e2231a] [&::-webkit-slider-thumb]:shadow-neon-cyan
-                  [&::-webkit-slider-thumb]:cursor-pointer"
-              />
-              <span className="text-sm font-mono text-[#242424] min-w-[2ch] text-center">
-                {localThreshold}
-              </span>
-            </div>
-            <p className="text-[11px] text-[#6d6a62] mt-1.5">
-              Max MCP tool calls before escalating to cloud model
-            </p>
-          </div>
-
-          {/* Pricing */}
-          <div>
-            <label className="text-xs text-[#424242] uppercase tracking-wider font-medium mb-2 flex items-center gap-1.5">
-              <DollarSign className="w-3 h-3 text-[#e2231a]" />
-              Cloud Pricing (per 1M tokens)
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-[11px] text-[#6d6a62] mb-1">Input $/M</p>
+        <p className="muted">
+          The local model is detected from llama.cpp. Remote credentials are
+          configured on the backend. Your preferences are saved when you choose
+          Save preferences.
+        </p>
+        <label>
+          Policy for new conversations
+          <select
+            value={draft.policy}
+            onChange={(e) =>
+              setDraft({ ...draft, policy: policySchema.parse(e.target.value) })
+            }
+          >
+            <option value="sticky_escalation">
+              Stay remote after escalation
+            </option>
+            <option value="reconsider_each_turn">
+              Classify every new request
+            </option>
+          </select>
+        </label>
+        <h3>Connections</h3>
+        <dl className="connections">
+          <dt>Local execution</dt>
+          <dd>
+            {health?.local_model_name || "Unknown"} ·{" "}
+            {health?.local_model ? "ready" : "setup required"}
+          </dd>
+          <dt>Remote execution</dt>
+          <dd>
+            {health?.remote_model_name || "Unknown"} ·{" "}
+            {health?.remote_access_error ||
+              (health?.remote_access_tested
+                ? "connected - response received"
+                : health?.remote_configured
+                  ? "key configured, access untested"
+                  : "key required")}
+          </dd>
+          <dt>Redis</dt>
+          <dd>{health?.redis ? "connected" : "not connected"}</dd>
+          <dt>MCP servers</dt>
+          <dd>
+            {health?.mcp_servers.join(", ") || "None"}
+            {health?.unavailable_mcp_servers.length
+              ? ` · Missing: ${health.unavailable_mcp_servers.join(", ")}`
+              : ""}
+          </dd>
+        </dl>
+        <h3>Text API pricing (USD per million tokens)</h3>
+        <p className="muted">
+          Leave blank until you have confirmed your model’s rates. Unconfigured
+          or missing usage is shown as unknown, never free. Standard text rates
+          only; special tiers and paid tools need separate accounting.
+        </p>
+        <div className="pricing-grid">
+          <label>
+            Exact model ID
+            <input
+              value={draft.pricing_model}
+              onChange={(e) =>
+                setDraft({ ...draft, pricing_model: e.target.value })
+              }
+            />
+          </label>
+          <label>
+            Pricing version / date
+            <input
+              placeholder="e.g. Standard rates, 2026-09-08"
+              value={draft.pricing_version}
+              onChange={(e) =>
+                setDraft({ ...draft, pricing_version: e.target.value })
+              }
+            />
+          </label>
+          {(["input_rate", "cached_input_rate", "output_rate"] as const).map(
+            (key) => (
+              <label key={key}>
+                {key.replaceAll("_", " ")}
                 <input
                   type="number"
-                  min={0}
-                  step={0.01}
-                  value={priceInput}
-                  onChange={(e) => setPriceInput(Number(e.target.value))}
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-[#d4d1c8] text-sm text-[#242424] font-mono focus:outline-none focus:border-[#e2231a]/70"
+                  min="0"
+                  step="any"
+                  value={draft[key] ?? ""}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      [key]:
+                        e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
                 />
-              </div>
-              <div>
-                <p className="text-[11px] text-[#6d6a62] mb-1">Output $/M</p>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={priceOutput}
-                  onChange={(e) => setPriceOutput(Number(e.target.value))}
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-[#d4d1c8] text-sm text-[#242424] font-mono focus:outline-none focus:border-[#e2231a]/70"
-                />
-              </div>
-            </div>
-            <p className="text-[11px] text-[#6d6a62] mt-1.5">
-              Used to compute per-query cost savings vs a monolithic baseline.
-              Update when API pricing changes.
-            </p>
-          </div>
-
-          {/* Debug visibility */}
-          <div>
-            <label className="text-xs text-[#424242] uppercase tracking-wider font-medium mb-2 flex items-center gap-1.5">
-              <FileText className="w-3 h-3 text-[#e2231a]" />
-              Handoff Visibility
-            </label>
-            <label className="flex items-center justify-between gap-3 p-3 rounded-lg bg-white border border-[#d4d1c8] cursor-pointer">
-              <div className="min-w-0">
-                <p className="text-sm text-[#242424]">Show handoff details</p>
-                <p className="text-[11px] text-[#6d6a62]">
-                  Escalated replies
-                </p>
-              </div>
-              <input
-                type="checkbox"
-                checked={showHandoffDetails}
-                onChange={(e) => onShowHandoffDetailsChange(e.target.checked)}
-                className="h-4 w-4 rounded border-[#d4d1c8] bg-white text-[#e2231a] accent-[#e2231a] focus:ring-[#e2231a]/30"
-              />
-            </label>
-          </div>
-
-          {/* Model info */}
-          {settings && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-white border border-[#d4d1c8]">
-                <Cpu className="w-4 h-4 text-[#e2231a] flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-xs text-[#6d6a62]">Local Model</p>
-                  <p className="text-sm text-[#242424] truncate font-mono">{settings.localModel}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-white border border-[#d4d1c8]">
-                <Cloud className="w-4 h-4 text-[#e2231a] flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-xs text-[#6d6a62]">Cloud Model</p>
-                  <p className="text-sm text-[#242424] truncate font-mono">{settings.highEndModel}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-white border border-[#d4d1c8]">
-                <DollarSign className="w-4 h-4 text-[#242424] flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-xs text-[#6d6a62]">MCP Servers</p>
-                  <p className="text-sm text-[#242424] font-mono">{settings.mcpServerCount} connected</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div
-              role="alert"
-              className="rounded-xl border border-edge-rose/30 bg-edge-rose/10 px-3 py-2 text-xs text-rose-900"
-            >
-              {error}
-            </div>
+              </label>
+            ),
           )}
         </div>
-
-        {/* Footer */}
-        <div className="flex justify-end gap-2 p-4 border-t border-[#d4d1c8] bg-white">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-xs text-[#6d6a62] hover:text-[#242424] transition-colors"
-          >
+        {error && (
+          <p role="alert" className="error-text">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="button" disabled={saving} onClick={onClose}>
             Cancel
           </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !Number.isFinite(priceInput) || !Number.isFinite(priceOutput)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs bg-[#e2231a] text-white border border-[#b41414] rounded-lg hover:bg-[#b41414] transition-colors disabled:opacity-50"
-          >
-            <Save className="h-3.5 w-3.5" />
-            {saving ? 'Saving...' : 'Save'}
+          <button className="primary" disabled={saving}>
+            {saving ? "Saving…" : "Save preferences"}
           </button>
         </div>
-      </div>
-    </div>
-  )
+      </form>
+    </dialog>
+  );
 }

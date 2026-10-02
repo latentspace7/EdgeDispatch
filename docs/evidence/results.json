@@ -1,0 +1,61 @@
+{
+  "classifier": {
+    "attempted": 200,
+    "scored": 197,
+    "unresolved": 3,
+    "confusion": {
+      "ESCALATE -> ESCALATE": 100,
+      "ESCALATE -> LOCAL": 11,
+      "LOCAL -> ESCALATE": 37,
+      "LOCAL -> LOCAL": 49
+    },
+    "accuracy": 0.7563451776649747,
+    "balanced_accuracy": 0.735334171380683,
+    "escalate_precision": 0.7299270072992701,
+    "escalate_recall": 0.9009009009009009,
+    "escalate_f1": 0.8064516129032258,
+    "local_recall": 0.5697674418604651,
+    "hf_gguf_agreement": 198
+  },
+  "answer_quality": {
+    "always_local": {
+      "attempts": 50,
+      "completed": 47,
+      "correctness": {
+        "passed": 24,
+        "scored": 47
+      },
+      "faithfulness": {
+        "passed": 23,
+        "scored": 47
+      },
+      "execution_api_cost_usd": 0
+    },
+    "always_remote": {
+      "attempts": 50,
+      "completed": 50,
+      "correctness": {
+        "passed": 47,
+        "scored": 50
+      },
+      "faithfulness": {
+        "passed": 50,
+        "scored": 50
+      },
+      "execution_api_cost_usd": 0.15996066
+    },
+    "edgedispatch": {
+      "attempts": 50,
+      "completed": 50,
+      "correctness": {
+        "passed": 46,
+        "scored": 50
+      },
+      "faithfulness": {
+        "passed": 47,
+        "scored": 50
+      },
+      "execution_api_cost_usd": 0.13798816
+    }
+  }
+}

@@ -1,0 +1,20 @@
+name: edgedispatch-phoenix
+services:
+  phoenix:
+    image: arizephoenix/phoenix@sha256:f8a80ff0ffb5ae394846baffaa0cc90b3add4e0f3515eaa968ca11079137bca4
+    ports:
+      - "127.0.0.1:6006:6006"
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_ENABLE_PROMETHEUS: "false"
+    volumes:
+      - phoenix-data:/mnt/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+volumes:
+  phoenix-data:

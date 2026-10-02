@@ -1,157 +1,118 @@
-"""
-EdgeDispatch  - FastAPI Application Entry Point
-
-Serves the EdgeDispatch hybrid LLM orchestration backend with:
-  - SSE streaming chat endpoint
-  - Conversation CRUD
-  - Settings management (threshold + pricing)
-  - Health check
-  - CORS for frontend
-  - MCP server lifecycle (stdio stubs for the prototype source environment)
-
-Usage:
-    uv run uvicorn server.main:app --reload --host 0.0.0.0 --port 8000
-"""
-
 from __future__ import annotations
 
 import logging
 import os
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 
-from fastapi import FastAPI
+from agents.mcp import MCPServerStdio, MCPServerStreamableHttp
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from redis.asyncio import Redis
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from agents.mcp import MCPServerStdio, MCPServerStdioParams
-
-from server.config import LOG_LEVEL, MCP_SERVER_CONFIGS
-from server.agent_definition import EdgeDispatchOrchestrator
-from server.routes import chat, settings
-
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
-logger = logging.getLogger("EdgeDispatch")
-
-# Global orchestrator instance
-_orchestrator: EdgeDispatchOrchestrator | None = None
-
-
-def _build_mcp_servers() -> list[MCPServerStdio]:
-    """Build MCPServerStdio instances from the prototype config.
-
-    Each entry in MCP_SERVER_CONFIGS launches a stub MCP server as a stdio
-    subprocess (thesis Section 4.2 source archetypes: document store,
-    relational DB, policy wiki). The subprocess cwd is the project root so
-    `python -m mcp_server_*` resolves the local packages.
-    """
-    project_root = os.getcwd()
-    servers: list[MCPServerStdio] = []
-    for cfg in MCP_SERVER_CONFIGS:
-        params = MCPServerStdioParams(
-            command=cfg["command"],
-            args=cfg.get("args", []),
-            cwd=project_root,
-        )
-        servers.append(
-            MCPServerStdio(
-                params=params,
-                name=cfg["name"],
-                cache_tools_list=True,
-            )
-        )
-    return servers
-
-
-async def _cleanup_mcp_server(server: MCPServerStdio) -> None:
-    """Best-effort cleanup for an MCP stdio subprocess."""
-    try:
-        await server.cleanup()
-    except BaseException as e:
-        if isinstance(e, (KeyboardInterrupt, SystemExit)):
-            raise
-        logger.warning("MCP server cleanup error (%s): %s", server.name, e)
+from server.agent.runtime import Runtime
+from server.agent.settings import AppConfig, mcp_configs
+from server.agent.storage import ConflictError, NotFoundError
+from server.quality.service import QualityService
+from server.routes import chat, quality, settings
+from server.routes.schemas import HealthResponse
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan: initialize and clean up the orchestrator + MCP servers."""
-    global _orchestrator
-
-    logger.info("Starting EdgeDispatch server...")
-
-    mcp_servers = _build_mcp_servers()
-    connected_mcp_servers: list[MCPServerStdio] = []
-    logger.info("Built %d MCP stdio servers: %s", len(mcp_servers), [s.name for s in mcp_servers])
-
-    try:
-        # Connect each MCP server before handing it to the orchestrator.
-        for server in mcp_servers:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    config = AppConfig()
+    redis = Redis.from_url(
+        config.redis_url,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+        decode_responses=True,
+    )
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(redis.aclose)
+        servers, missing = [], []
+        for item in mcp_configs():
+            if item.get("url"):
+                params = {"url": item["url"]}
+                if item.get("bearer_token_env"):
+                    token = os.environ.get(item["bearer_token_env"])
+                    if not token:
+                        missing.append(item["name"])
+                        continue
+                    params["headers"] = {"Authorization": f"Bearer {token}"}
+                server = MCPServerStreamableHttp(
+                    name=item["name"], params=params, cache_tools_list=False
+                )
+            else:
+                server = MCPServerStdio(
+                    name=item["name"],
+                    params={
+                        key: value
+                        for key, value in item.items()
+                        if key in ("command", "args", "cwd", "env")
+                    },
+                    cache_tools_list=False,
+                )
             try:
-                await server.connect()
-                connected_mcp_servers.append(server)
-                logger.info("Connected MCP server: %s", server.name)
-            except Exception as e:
-                logger.warning("Failed to connect MCP server %s: %s (skipping)", server.name, e)
-                await _cleanup_mcp_server(server)
-
-        _orchestrator = EdgeDispatchOrchestrator(
-            mcp_servers=connected_mcp_servers,
-            tool_threshold=2,
-        )
-
-        # Inject orchestrator into chat routes
-        chat.set_orchestrator(_orchestrator)
-
-        logger.info(
-            "EdgeDispatch orchestrator ready with %d connected MCP server(s)",
-            len(connected_mcp_servers),
-        )
-
+                servers.append(await stack.enter_async_context(server))
+            except Exception as error:
+                logging.getLogger(__name__).warning(
+                    "MCP startup failed for %s (%s)", item["name"], type(error).__name__
+                )
+                missing.append(item["name"])
+        runtime = Runtime(config, redis, servers, missing)
+        stack.push_async_callback(runtime.close)
+        app.state.runtime = runtime
+        runtime.quality = QualityService(runtime.ledger)
+        stack.push_async_callback(runtime.quality.close)
+        await runtime.quality.start()
         yield
-    finally:
-        # Cleanup
-        if _orchestrator:
-            await _orchestrator.close()
-            _orchestrator = None
-        chat.set_orchestrator(None)
-        for server in connected_mcp_servers:
-            await _cleanup_mcp_server(server)
-        logger.info("EdgeDispatch server shut down")
 
 
 app = FastAPI(
-    title="EdgeDispatch",
-    description="Hybrid LLM Orchestration for Local-First AI Workflows",
-    version="0.1.0",
-    lifespan=lifespan,
+    title="EdgeDispatch local-first agent system", version="1.0.0", lifespan=lifespan
 )
-
-# CORS: allow frontend dev server
+app.add_middleware(
+    TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"]
+)
+origins = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8000"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Last-Event-ID"],
 )
 
-# Register routes
+
+@app.middleware("http")
+async def local_writes(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    if request.method in ("POST", "PUT", "DELETE"):
+        origin = request.headers.get("origin")
+        if origin and origin not in origins:
+            return JSONResponse({"detail": "Untrusted origin"}, status_code=403)
+        if request.headers.get("content-type", "").split(";")[0] != "application/json":
+            return JSONResponse({"detail": "JSON requests required"}, status_code=415)
+    return await call_next(request)
+
+
+@app.exception_handler(ConflictError)
+async def conflict(request: Request, error: ConflictError) -> JSONResponse:
+    return JSONResponse({"detail": str(error)}, status_code=409)
+
+
+@app.exception_handler(NotFoundError)
+async def not_found(request: Request, error: NotFoundError) -> JSONResponse:
+    return JSONResponse({"detail": "Conversation or turn not found"}, status_code=404)
+
+
+@app.get("/api/health", response_model=HealthResponse)
+async def health(request: Request):
+    return await request.app.state.runtime.health()
+
+
 app.include_router(chat.router)
 app.include_router(settings.router)
-
-
-@app.get("/api/health")
-async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "ok",
-        "version": "0.1.0",
-        "orchestrator_ready": _orchestrator is not None,
-    }
+app.include_router(quality.router)

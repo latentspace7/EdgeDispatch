@@ -1,0 +1,13 @@
+{
+  "dataset_version": "southern-cross-air-v1",
+  "as_of": "2026-09-16T00:00:00Z",
+  "synthetic": true,
+  "counts": {
+    "customers": 100,
+    "bookings": 1000,
+    "support_cases": 200,
+    "case_messages": 1000,
+    "refund_records": 49,
+    "policies": 4
+  }
+}
