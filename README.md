@@ -18,11 +18,13 @@
 
 ## About the thesis
 
-**Can this request be completed here, by the local model and its available tools?**
+**A blueprint for turning agent execution evidence into learned local capability decisions.**
 
-EdgeDispatch is a local-first agent system that learns this execution decision from reviewed local-model outcomes. An execution-decision LoRA adapter, fine-tuned for **four epochs**, enables **LFM2.5-2.6B** to predict `LOCAL` or `ESCALATE`. The adapter is then disabled while the unchanged local base completes retained work; escalated requests use a remote model. Both paths share MCP tools and conversation history.
+EdgeDispatch connects **data collection, capability assessment and supervised fine-tuning** to learn which tasks a local model can complete and which it should escalate. Where organisations retain agent execution records, those traces can provide representative requests, conversation context and tool interactions for assessing a chosen local model. Executing those tasks with that model and reviewing its outcomes provides training evidence for the local-or-escalate decision.
 
-The thesis studies this **Adaptive Inference Bridge** in a synthetic airline support environment, comparing local-only, remote-only and adaptive execution. It evaluates the classifier separately from complete-answer quality and remote execution API cost.
+We demonstrate this **Adaptive Inference Bridge** in a synthetic airline support environment. We gathered and reviewed local execution outcomes to construct **1,020 training contexts from 210 source conversations**, then fine-tuned an **execution-decision LoRA adapter for four epochs** on **LFM2.5-2.6B**. The adapter predicts `LOCAL` or `ESCALATE` from a request and its available context. It is disabled while the unchanged local base completes retained work, and escalated requests use a remote model. Both paths share MCP tools and conversation history.
+
+The thesis evaluates the learned classifier separately from complete-answer quality and remote execution API cost, comparing local-only, remote-only and adaptive execution. The reusable contribution is the process from reviewed execution evidence to a trained decision and evaluated service outcomes. Applying it to another model or enterprise workflow requires assessing that local executor on representative tasks.
 
 **Dolwin Fernandes · Master of Artificial Intelligence · La Trobe University · October 2026**
 Supervisor: Dr. Phu Lai · [Completed thesis (PDF)](docs/ltu_thesis_b_v1.pdf)
@@ -69,9 +71,9 @@ The harness owns tool execution, streaming, cancellation, approvals, conversatio
 
 ## Run locally
 
-Requires **Python 3.12+**, **uv**, **Node 22.13+ or 24+**, **Docker**, a compatible **llama.cpp** build and the separate [model artifacts](docs/models.md). Model weights and raw research records are stored in `../thesis_artifacts`, outside this Git repository.
+Requires **Python 3.12+**, **uv**, **Node 22.13+ or 24+**, **Docker**, a compatible **llama.cpp** build and the separate [model files](docs/configuration.md#model-files). Set `EDGE_ARTIFACTS_DIR` to the model bundle location; the example configuration uses `../thesis_artifacts`.
 
-From the repository root:
+From the **EdgeDispatch** repository root:
 
 ```bash
 uv sync --locked --extra dev
@@ -120,7 +122,7 @@ This is a single-user research application. Keep services bound to loopback. Esc
 | [`training/`](training/) | Selected training procedure and offline result verification |
 | [`docs/`](docs/) | Thesis PDF, diagrams and setup reference |
 
-Model weights, frozen experiment records, runtime logs, caches and build output are excluded from Git. The [artifact guide](docs/models.md) describes the separate research bundle.
+Model weights, frozen experiment records, runtime logs, caches and build output are excluded from Git.
 
 ## Development checks
 

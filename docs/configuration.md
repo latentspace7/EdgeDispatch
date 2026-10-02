@@ -1,6 +1,6 @@
 # Configuration
 
-Copy [`.env.example`](../.env.example) to `.env` and run commands from the repository root. Keep credentials in the ignored `.env` file.
+Copy [`.env.example`](../.env.example) to `.env` and run commands from the EdgeDispatch repository root. Keep credentials in the ignored `.env` file.
 
 | Variable | Purpose |
 | --- | --- |
@@ -17,6 +17,20 @@ Copy [`.env.example`](../.env.example) to `.env` and run commands from the repos
 | `EDGE_DEFAULT_ESCALATION_POLICY` | `sticky_escalation` or `reconsider_each_turn` |
 
 The four-epoch adapter uses `EDGE_DECISION_MODE=direct`. Advanced setups can override `EDGE_ADAPTER_PATH`, `EDGE_SERVING_REPORT` and `EDGE_MCP_CONFIG`; artifact identity checks still apply.
+
+## Model files
+
+The model bundle is distributed separately from the EdgeDispatch code. Set `EDGE_ARTIFACTS_DIR` to its location. The default is a sibling folder named `thesis_artifacts`; the checkout folder's name does not affect this setting. No public model download link is available yet.
+
+Local serving requires these paths within the bundle:
+
+- `models/lfm-base-Q8_0.gguf`
+- `models/execution-decision-adapter.gguf`
+- `models/serving-check.json`
+- `adapter/adapter_model.safetensors`
+- `accepted_candidate_seal.json`
+
+Use the llama.cpp build recorded in the bundle's serving report. The application verifies the model files against that report before local execution. Model startup commands are in the [README](../README.md#run-locally).
 
 ## Optional answer assessment
 
