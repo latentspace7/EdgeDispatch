@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="docs/ltu_thesis_b_v1.pdf"><strong>Read the thesis</strong></a> ·
+  <a href="https://huggingface.co/latentspace7">🤗 Hugging Face</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#run-locally">Run locally</a> ·
   <a href="training/README.md">Training &amp; evaluation</a>
@@ -19,6 +20,8 @@
 ## About the thesis
 
 **A blueprint for turning agent execution evidence into learned local capability decisions.**
+
+**Find me on Hugging Face:** [🤗 latentspace7](https://huggingface.co/latentspace7)
 
 EdgeDispatch connects **data collection, capability assessment and supervised fine-tuning** to learn which tasks a local model can complete and which it should escalate. Where organisations retain agent execution records, those traces can provide representative requests, conversation context and tool interactions for assessing a chosen local model. Executing those tasks with that model and reviewing its outcomes provides training evidence for the local-or-escalate decision.
 
@@ -39,7 +42,7 @@ Supervisor: Dr. Phu Lai · [Completed thesis (PDF)](docs/ltu_thesis_b_v1.pdf)
 | Correctness / faithfulness judge passes | **46/50 · 92%** / **47/50 · 94%** |
 | Remote execution API-cost reduction | **13.74%** relative to remote-only |
 
-Classifier results cover 197 scored contexts from 200 attempted contexts. Answer-quality and cost results use the fixed 50-question mixed workload, with GPT-5.6 Luna as the remote executor and Phoenix native evaluators. They describe this experiment; API-cost savings exclude local hardware and evaluation costs. See Chapters 4–5 of the thesis for methods, denominators and limitations, or inspect the [recomputed results](docs/evidence/results.json).
+Classifier results cover 197 scored contexts from 200 attempted contexts. Answer-quality and cost results use the fixed 50-question mixed workload, with GPT-5.6 Luna as the remote executor and Phoenix native evaluators. They describe this experiment, and API-cost savings exclude local hardware and evaluation costs. See Chapters 4–5 of the thesis for methods, denominators and limitations, or inspect the [recomputed results](docs/evidence/results.json).
 
 ## Architecture
 
@@ -65,13 +68,13 @@ flowchart LR
     class R,Q remote
 ```
 
-The harness owns tool execution, streaming, cancellation, approvals, conversation storage and escalation policy. Redis coordinates active requests; JSONL files retain history. The three read-only MCP servers expose reproducible synthetic airline data.
+The harness owns tool execution, streaming, cancellation, approvals, conversation storage and escalation policy. Redis coordinates active requests, while JSONL files retain history. The three read-only MCP servers expose reproducible synthetic airline data.
 
 [Editable harness diagram](docs/figures/harness_flow.drawio) · [Capability-assessment diagram](docs/figures/capability_assessment.drawio)
 
 ## Run locally
 
-Requires **Python 3.12+**, **uv**, **Node 22.13+ or 24+**, **Docker**, a compatible **llama.cpp** build and the separate [model files](docs/configuration.md#model-files). Set `EDGE_ARTIFACTS_DIR` to the model bundle location; the example configuration uses `../thesis_artifacts`.
+Requires **Python 3.12+**, **uv**, **Node 22.13+ or 24+**, **Docker**, a compatible **llama.cpp** build and the separate [model files](docs/configuration.md#model-files). Set `EDGE_ARTIFACTS_DIR` to the model bundle location, and the example configuration uses `../thesis_artifacts`.
 
 From the **EdgeDispatch** repository root:
 
@@ -81,7 +84,7 @@ cp -n .env.example .env
 docker compose up -d redis
 ```
 
-Set `OPENAI_API_KEY` and a remote model accessible to your account in `.env`. The recorded experiment used `gpt-5.6-luna`. Local execution requires the selected model artifacts; remote escalation requires valid provider access.
+Set `OPENAI_API_KEY` and a remote model accessible to your account in `.env`. The recorded experiment used `gpt-5.6-luna`. Local execution requires the selected model artifacts, while remote escalation requires valid provider access.
 
 Start each process in its own terminal:
 
@@ -109,7 +112,7 @@ Open [the workspace](http://127.0.0.1:5173). **Settings & connections** shows mo
 
 Chats default to **Stay remote after escalation**. Select **Classify every new request** to reassess each turn. The selected thesis adapter uses the `direct` decision format. [Configuration and optional answer assessment](docs/configuration.md) explain the remaining settings.
 
-This is a single-user research application. Keep services bound to loopback. Escalation sends relevant conversation history and tool results to the remote provider; local JSONL history also contains this content.
+This is a single-user research application. Keep services bound to loopback. Escalation sends relevant conversation history and tool results to the remote provider, and local JSONL history also contains this content.
 
 ## Repository guide
 
@@ -136,4 +139,4 @@ npm run typecheck
 npm run build
 ```
 
-Mypy currently covers the decision client. These checks do not call model providers; model inference, remote access and GPU training are separate runtime checks. Research evaluation commands are documented in [`training/README.md`](training/README.md).
+Mypy currently covers the decision client. These checks do not call model providers, and model inference, remote access and GPU training are separate runtime checks. Research evaluation commands are documented in [`training/README.md`](training/README.md).
